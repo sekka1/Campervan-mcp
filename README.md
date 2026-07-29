@@ -121,7 +121,20 @@ Uses ESLint 9 flat config (`eslint.config.mjs`) with `typescript-eslint` recomme
 
 ## Deployment
 
-Update `wrangler.toml` with your own D1 `database_id`, then deploy:
+Deployment uses two GitHub Actions pipelines with `CLOUDFLARE_ACCOUNT_ID` and
+`CLOUDFLARE_API_TOKEN` configured as repository secrets:
+
+1. **[`Setup Cloudflare Infrastructure`](./.github/workflows/setup-infrastructure.yml)**
+   (`workflow_dispatch`, manual) — a one-time bootstrap pipeline that creates
+   the D1 database and Vectorize index if they don't already exist. Run it
+   once from the **Actions** tab, then copy the printed `database_id` into
+   `wrangler.toml`, commit, and push to `main`.
+2. **[`Deploy to Production`](./.github/workflows/deploy-production.yml)**
+   (runs automatically on every push to `main`) — applies any new D1
+   migrations in `d1/migrations/` and deploys the Worker.
+
+To deploy manually instead, update `wrangler.toml` with your own D1
+`database_id`, then run:
 
 ```bash
 pnpm deploy

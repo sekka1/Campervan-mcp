@@ -1,0 +1,82 @@
+# One-time (or as-needed) bootstrap pipeline. Ongoing infra changes (D1
+# migrations + Worker deploys) are handled automatically by
+# `deploy-production.yml` on every push to `main`. This workflow only
+# provisions resources that can't be managed via migrations, e.g. creating
+# the D1 database and Vectorize index themselves. It is manually triggered
+# so it never runs accidentally against production.
+name: Setup Cloudflare Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      d1_database_name:
+        description: 'Name of the D1 database to create'
+        required: false
+        default: 'van_specs_db'
+      vectorize_index_name:
+        description: 'Name of the Vectorize index to create'
+        required: false
+        default: 'van_manuals_index'
+      vectorize_dimensions:
+        description: 'Vector dimensions for the Vectorize index'
+        required: false
+        default: '768'
+      vectorize_metric:
+        description: 'Distance metric for the Vectorize index'
+        required: false
+        default: 'cosine'
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install Dependencies
+        run: pnpm install
+
+      - name: Create D1 Database (skips if it already exists)
+        run: |
+          if npx wrangler d1 info "${{ inputs.d1_database_name }}" >/dev/null 2>&1; then
+            echo "D1 database '${{ inputs.d1_database_name }}' already exists. Skipping creation."
+            npx wrangler d1 info "${{ inputs.d1_database_name }}"
+          else
+            npx wrangler d1 create "${{ inputs.d1_database_name }}"
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Create Vectorize Index (skips if it already exists)
+        run: |
+          if npx wrangler vectorize get "${{ inputs.vectorize_index_name }}" >/dev/null 2>&1; then
+            echo "Vectorize index '${{ inputs.vectorize_index_name }}' already exists. Skipping creation."
+            npx wrangler vectorize get "${{ inputs.vectorize_index_name }}"
+          else
+            npx wrangler vectorize create "${{ inputs.vectorize_index_name }}" \
+              --dimensions="${{ inputs.vectorize_dimensions }}" \
+              --metric="${{ inputs.vectorize_metric }}"
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Next Steps
+        run: |
+          echo "If the D1 database was just created above, copy its 'database_id'"
+          echo "into wrangler.toml (d1_databases.database_id), commit, and push to main."
+          echo "The 'Deploy to Production' workflow will then apply migrations and deploy."
