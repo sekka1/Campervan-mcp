@@ -60,9 +60,40 @@ export const MAX_DELETE_CANDIDATE_CHUNKS = 2000;
 export interface ManualChunkMetadata {
   filename: string;
   manual_title: string;
+  title: string;
+  doc_type: string;
+  category: string;
   chunk_index: number;
   total_chunks: number;
   text: string;
+}
+
+/** Result of mapping a file path to its rich metadata classification. */
+export interface DocClassification {
+  docType: string;
+  category: string;
+}
+
+/**
+ * Maps a file's path to a `doc_type`/`category` pair based on its folder
+ * prefix, so travel guides, product specs, and hardware docs can be indexed
+ * (and filtered on) alongside standard manuals:
+ *   - `travel/`, `guides/`   -> doc_type: "road_trip_guide", category: "travel"
+ *   - `specs/`, `hardware/`  -> doc_type: "product_spec",    category: "hardware"
+ *   - `manuals/` or anything else (unmapped) -> doc_type: "manual", category: "technical"
+ */
+export function classifyDocPath(filePath: string): DocClassification {
+  const normalized = filePath.replace(/\\/g, "/").toLowerCase();
+
+  if (/(^|\/)travel\//.test(normalized) || /(^|\/)guides\//.test(normalized)) {
+    return { docType: "road_trip_guide", category: "travel" };
+  }
+
+  if (/(^|\/)specs\//.test(normalized) || /(^|\/)hardware\//.test(normalized)) {
+    return { docType: "product_spec", category: "hardware" };
+  }
+
+  return { docType: "manual", category: "technical" };
 }
 
 export interface ManualChunk {
@@ -193,6 +224,7 @@ export function recursiveSplitText(
 export function buildManualChunks(filePath: string, text: string): ManualChunk[] {
   const sanitizedName = sanitizeFilename(filePath);
   const manualTitle = deriveManualTitle(filePath);
+  const { docType, category } = classifyDocPath(filePath);
   const textChunks = recursiveSplitText(text);
   const totalChunks = textChunks.length;
 
@@ -202,6 +234,9 @@ export function buildManualChunks(filePath: string, text: string): ManualChunk[]
     metadata: {
       filename: basename(filePath),
       manual_title: manualTitle,
+      title: manualTitle,
+      doc_type: docType,
+      category,
       chunk_index: index,
       total_chunks: totalChunks,
       text: chunkText,

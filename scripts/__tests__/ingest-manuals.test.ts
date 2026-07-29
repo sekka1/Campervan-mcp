@@ -20,6 +20,7 @@ import {
   buildManualChunks,
   CHUNK_OVERLAP_CHARS,
   CHUNK_SIZE_CHARS,
+  classifyDocPath,
   deleteVectorsByIds,
   deriveManualTitle,
   EMBEDDING_BATCH_SIZE,
@@ -126,6 +127,9 @@ describe("buildManualChunks", () => {
     expect(chunks[0].metadata).toMatchObject({
       filename: "velit-heater-manual.pdf",
       manual_title: "Velit Heater Manual",
+      title: "Velit Heater Manual",
+      doc_type: "manual",
+      category: "technical",
       chunk_index: 0,
       total_chunks: chunks.length,
     });
@@ -139,6 +143,69 @@ describe("buildManualChunks", () => {
     chunks.forEach((chunk, index) => {
       expect(chunk.metadata.chunk_index).toBe(index);
       expect(chunk.metadata.total_chunks).toBe(chunks.length);
+    });
+  });
+
+  it("classifies travel/guides paths as road_trip_guide/travel metadata", () => {
+    const chunks = buildManualChunks("travel/vancouver-island.pdf", "Remote routes and camping spots.");
+    expect(chunks[0].metadata).toMatchObject({ doc_type: "road_trip_guide", category: "travel" });
+
+    const guideChunks = buildManualChunks("guides/boondocking.pdf", "Boondocking tips.");
+    expect(guideChunks[0].metadata).toMatchObject({ doc_type: "road_trip_guide", category: "travel" });
+  });
+
+  it("classifies specs/hardware paths as product_spec/hardware metadata", () => {
+    const chunks = buildManualChunks("specs/victron-multiplus.pdf", "Product specifications.");
+    expect(chunks[0].metadata).toMatchObject({ doc_type: "product_spec", category: "hardware" });
+
+    const hardwareChunks = buildManualChunks("hardware/pump.pdf", "Pump specs.");
+    expect(hardwareChunks[0].metadata).toMatchObject({ doc_type: "product_spec", category: "hardware" });
+  });
+
+  it("defaults unmapped/manuals paths to manual/technical metadata", () => {
+    const chunks = buildManualChunks("docs/manuals/velit-heater.pdf", "Heater manual text.");
+    expect(chunks[0].metadata).toMatchObject({ doc_type: "manual", category: "technical" });
+  });
+});
+
+describe("classifyDocPath", () => {
+  it("maps travel/ and guides/ prefixes to road_trip_guide/travel", () => {
+    expect(classifyDocPath("travel/vancouver_island.pdf")).toEqual({
+      docType: "road_trip_guide",
+      category: "travel",
+    });
+    expect(classifyDocPath("guides/boondocking.pdf")).toEqual({
+      docType: "road_trip_guide",
+      category: "travel",
+    });
+  });
+
+  it("maps specs/ and hardware/ prefixes to product_spec/hardware", () => {
+    expect(classifyDocPath("specs/victron_multiplus.pdf")).toEqual({
+      docType: "product_spec",
+      category: "hardware",
+    });
+    expect(classifyDocPath("hardware/pump.pdf")).toEqual({
+      docType: "product_spec",
+      category: "hardware",
+    });
+  });
+
+  it("maps manuals/ and unmapped prefixes to manual/technical", () => {
+    expect(classifyDocPath("manuals/velit-heater.pdf")).toEqual({
+      docType: "manual",
+      category: "technical",
+    });
+    expect(classifyDocPath("electrical/victron/multiplus.pdf")).toEqual({
+      docType: "manual",
+      category: "technical",
+    });
+  });
+
+  it("is case-insensitive when matching folder prefixes", () => {
+    expect(classifyDocPath("Travel/Vancouver.pdf")).toEqual({
+      docType: "road_trip_guide",
+      category: "travel",
     });
   });
 });

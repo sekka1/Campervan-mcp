@@ -126,9 +126,11 @@ Deployment uses two GitHub Actions pipelines with `CLOUDFLARE_ACCOUNT_ID` and
 
 1. **[`Setup Cloudflare Infrastructure`](./.github/workflows/setup-infrastructure.yml)**
    (`workflow_dispatch`, manual) — a one-time bootstrap pipeline that creates
-   the D1 database and Vectorize index if they don't already exist. Run it
-   once from the **Actions** tab, then copy the printed `database_id` into
-   `wrangler.toml`, commit, and push to `main`.
+   the D1 database, the Vectorize index, and the `category`/`doc_type`
+   metadata indexes on that Vectorize index (required for metadata filtering)
+   if they don't already exist. Run it once from the **Actions** tab, then
+   copy the printed `database_id` into `wrangler.toml`, commit, and push to
+   `main`.
 2. **[`Deploy to Production`](./.github/workflows/deploy-production.yml)**
    (runs automatically on every push to `main`) — applies any new D1
    migrations in `d1/migrations/` and deploys the Worker.
@@ -164,6 +166,66 @@ Each chunk is embedded via the Cloudflare Workers AI REST API (`@cf/baai/bge-bas
 (`{sanitized_filename}#chunk_{index}`), so re-ingesting an updated manual overwrites its
 previous chunks. Requires `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` environment
 variables.
+
+#### Metadata Schema
+
+Every vector upserted by `ingest-manuals.ts` or `sync-r2-manuals.ts` carries the following
+metadata, so results can be filtered by document type/category in addition to full-text search:
+
+```json
+{
+  "filename": "travel/vancouver_island.pdf",
+  "manual_title": "Vancouver Island",
+  "title": "Vancouver Island",
+  "doc_type": "road_trip_guide",
+  "category": "travel",
+  "chunk_index": 0,
+  "total_chunks": 12,
+  "text": "Raw extracted text chunk..."
+}
+```
+
+`doc_type`/`category` are inferred from the file's folder prefix:
+
+| Path prefix                  | `doc_type`        | `category`  |
+| ----------------------------- | ----------------- | ----------- |
+| `travel/`, `guides/`           | `road_trip_guide`  | `travel`    |
+| `specs/`, `hardware/`          | `product_spec`     | `hardware`  |
+| `manuals/` or anything else    | `manual`           | `technical` |
+
+Filtering on `category`/`doc_type` requires Vectorize metadata indexes, which the
+`setup-infrastructure.yml` workflow creates automatically:
+
+```bash
+npx wrangler vectorize create-metadata-index van_manuals_index --property-name=category --type=string
+npx wrangler vectorize create-metadata-index van_manuals_index --property-name=doc_type --type=string
+```
+
+### Manual R2 Bucket Sync (Large Manuals)
+
+Large PDF manuals (too big to comfortably commit to the git repo) can instead be uploaded to
+the `campervan-mcp` Cloudflare R2 bucket, including nested subfolders (e.g.
+`heaters/velit-2026.pdf` or `electrical/victron/multiplus.pdf`). Run the
+**Manual Sync R2 Manuals to Vectorize** workflow (`.github/workflows/sync-r2.yml`) from the
+GitHub Actions UI (`workflow_dispatch`) to recursively list the bucket, diff it against a
+manifest persisted in R2, and stream/chunk/embed/upsert only the added or modified PDFs while
+deleting vectors for any PDFs removed from the bucket.
+
+```bash
+# Sync R2 bucket manuals (uses CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN for both
+# R2 S3-compatible access and the Workers AI / Vectorize REST APIs)
+npx tsx scripts/sync-r2-manuals.ts
+
+# Preview the diff without embedding/upserting anything
+npx tsx scripts/sync-r2-manuals.ts --dry-run
+
+# Force re-indexing of every PDF in the bucket, ignoring the manifest cache
+npx tsx scripts/sync-r2-manuals.ts --force-reindex
+```
+
+Vector IDs are derived from the full R2 object key (subfolder path included), e.g.
+`electrical_victron_multiplus_pdf#chunk_0`, so nested manuals with the same filename in
+different folders don't collide.
 
 ### Legacy Ad-Hoc Ingestion Script
 
