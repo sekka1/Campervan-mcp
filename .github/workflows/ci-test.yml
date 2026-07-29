@@ -1,0 +1,41 @@
+name: PR Quality & Test Suite
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install Dependencies
+        run: pnpm install
+
+      - name: Type Check & Lint
+        run: |
+          pnpm tsc --noEmit
+          pnpm eslint .
+
+      - name: Run Unit Tests with Coverage
+        run: pnpm test:unit --coverage
+
+      - name: Run E2E Endpoint Tests
+        run: pnpm test:e2e
+
+      - name: Dry Run D1 Migrations
+        run: npx wrangler d1 migrations list DB --local

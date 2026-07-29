@@ -1,0 +1,18 @@
+name = "campervan-mcp-server"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+
+# D1 Relational DB Binding
+[[d1_databases]]
+binding = "DB"
+database_name = "van_specs_db"
+database_id = "REPLACE_WITH_D1_ID"
+migrations_dir = "d1/migrations"
+
+# Vectorize Binding
+[[vectorize]]
+binding = "VECTOR_INDEX"
+index_name = "van_manuals_index"
+
+[vars]
+ENVIRONMENT = "production"
