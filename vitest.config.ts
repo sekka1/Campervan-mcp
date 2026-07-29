@@ -8,7 +8,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "html"],
-      include: ["src/utils/formulas.ts", "scripts/ingest-manuals.ts"],
+      include: ["src/utils/formulas.ts", "scripts/ingest-manuals.ts", "scripts/sync-r2-manuals.ts"],
       exclude: [],
       thresholds: {
         lines: 90,

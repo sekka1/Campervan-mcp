@@ -165,6 +165,32 @@ Each chunk is embedded via the Cloudflare Workers AI REST API (`@cf/baai/bge-bas
 previous chunks. Requires `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` environment
 variables.
 
+### Manual R2 Bucket Sync (Large Manuals)
+
+Large PDF manuals (too big to comfortably commit to the git repo) can instead be uploaded to
+the `campervan-mcp` Cloudflare R2 bucket, including nested subfolders (e.g.
+`heaters/velit-2026.pdf` or `electrical/victron/multiplus.pdf`). Run the
+**Manual Sync R2 Manuals to Vectorize** workflow (`.github/workflows/sync-r2.yml`) from the
+GitHub Actions UI (`workflow_dispatch`) to recursively list the bucket, diff it against a
+manifest persisted in R2, and stream/chunk/embed/upsert only the added or modified PDFs while
+deleting vectors for any PDFs removed from the bucket.
+
+```bash
+# Sync R2 bucket manuals (uses CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN for both
+# R2 S3-compatible access and the Workers AI / Vectorize REST APIs)
+npx tsx scripts/sync-r2-manuals.ts
+
+# Preview the diff without embedding/upserting anything
+npx tsx scripts/sync-r2-manuals.ts --dry-run
+
+# Force re-indexing of every PDF in the bucket, ignoring the manifest cache
+npx tsx scripts/sync-r2-manuals.ts --force-reindex
+```
+
+Vector IDs are derived from the full R2 object key (subfolder path included), e.g.
+`electrical_victron_multiplus_pdf#chunk_0`, so nested manuals with the same filename in
+different folders don't collide.
+
 ### Legacy Ad-Hoc Ingestion Script
 
 Older HTML/PDF sources can still be ingested individually using the legacy script:
