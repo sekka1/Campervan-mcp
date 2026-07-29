@@ -6,7 +6,7 @@ compatibility_date = "2026-07-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "van_specs_db"
-database_id = "REPLACE_WITH_D1_ID"
+database_id = "2aa73cfb-cf41-4ab3-b614-b0cf1eb7ec0c"
 migrations_dir = "d1/migrations"
 
 # Vectorize Binding
