@@ -40,6 +40,7 @@ import {
 import { extractText, getDocumentProxy } from "unpdf";
 import {
   batchArray,
+  classifyDocPath,
   deleteVectorsByIds,
   EMBEDDING_BATCH_SIZE,
   generateChunkId,
@@ -219,6 +220,7 @@ export function deriveManualTitleFromKey(key: string): string {
 export function buildR2ManualChunks(key: string, text: string): ManualChunk[] {
   const sanitizedName = sanitizeR2Key(key);
   const manualTitle = deriveManualTitleFromKey(key);
+  const { docType, category } = classifyDocPath(key);
   const textChunks = recursiveSplitText(text);
   const totalChunks = textChunks.length;
 
@@ -228,6 +230,9 @@ export function buildR2ManualChunks(key: string, text: string): ManualChunk[] {
     metadata: {
       filename: key,
       manual_title: manualTitle,
+      title: manualTitle,
+      doc_type: docType,
+      category,
       chunk_index: index,
       total_chunks: totalChunks,
       text: chunkText,

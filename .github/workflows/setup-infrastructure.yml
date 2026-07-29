@@ -75,6 +75,20 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
+      - name: Create Vectorize Metadata Indexes (skips if they already exist)
+        run: |
+          for property in category doc_type; do
+            if npx wrangler vectorize list-metadata-index "${{ inputs.vectorize_index_name }}" 2>/dev/null | grep -q "\"propertyName\": \"$property\""; then
+              echo "Metadata index for '$property' already exists. Skipping creation."
+            else
+              npx wrangler vectorize create-metadata-index "${{ inputs.vectorize_index_name }}" \
+                --property-name="$property" --type=string
+            fi
+          done
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Next Steps
         run: |
           echo "If the D1 database was just created above, copy its 'database_id'"

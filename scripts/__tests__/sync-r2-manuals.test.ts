@@ -80,9 +80,22 @@ describe("buildR2ManualChunks", () => {
     expect(chunks[0].metadata).toMatchObject({
       filename: "electrical/victron/multiplus.pdf",
       manual_title: "Multiplus",
+      title: "Multiplus",
+      doc_type: "manual",
+      category: "technical",
       chunk_index: 0,
       total_chunks: chunks.length,
     });
+  });
+
+  it("classifies travel/ paths as road_trip_guide/travel metadata", () => {
+    const chunks = buildR2ManualChunks("travel/vancouver_island.pdf", "Remote routes and camping spots.");
+    expect(chunks[0].metadata).toMatchObject({ doc_type: "road_trip_guide", category: "travel" });
+  });
+
+  it("classifies specs/ and hardware/ paths as product_spec/hardware metadata", () => {
+    const chunks = buildR2ManualChunks("specs/inverter.pdf", "Inverter specifications.");
+    expect(chunks[0].metadata).toMatchObject({ doc_type: "product_spec", category: "hardware" });
   });
 });
 
