@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   calculateVoltageDrop,
   AWG_TABLE,
-  VAN_SPECS,
 } from "../../src/utils/formulas";
 
 describe("calculateVoltageDrop", () => {

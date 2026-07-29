@@ -27,15 +27,6 @@ const mockD1Database: D1Database = {
   exec: vi.fn().mockResolvedValue({ count: 0, duration: 0 }),
 } as unknown as D1Database;
 
-const mockVectorIndex: VectorizeIndex = {
-  query: vi.fn().mockResolvedValue({ matches: [] }),
-  upsert: vi.fn().mockResolvedValue({ count: 0 }),
-  insert: vi.fn().mockResolvedValue({ count: 0 }),
-  getByIds: vi.fn().mockResolvedValue([]),
-  deleteByIds: vi.fn().mockResolvedValue({ count: 0 }),
-  describe: vi.fn().mockResolvedValue({ name: "van_manuals_index" }),
-} as unknown as VectorizeIndex;
-
 // ---------------------------------------------------------------------------
 // Import the worker after setting up mocks
 // ---------------------------------------------------------------------------

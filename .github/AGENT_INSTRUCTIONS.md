@@ -42,7 +42,8 @@ Before outputting code or opening a PR, perform these checks:
 2. Is the TypeScript code compatible with Cloudflare Workers (no Node.js filesystem (`fs`) imports unless using `node:` compatibility mode)?
 3. Are all tool parameter schemas fully documented with `.describe()` strings so LLM clients understand input requirements?
 4. Have you run `pnpm tsc --noEmit` to verify zero TypeScript errors?
-5. Have you run `pnpm test:unit` and confirmed all tests pass?
+5. Have you run `pnpm lint` and confirmed there are no lint errors? If there are, fix them and re-run `pnpm lint` until it passes.
+6. Have you run `pnpm test` (unit + E2E) and confirmed all tests pass? If any fail, fix the issues and re-run the full test suite again before committing.
 
 ## Directory Reference
 

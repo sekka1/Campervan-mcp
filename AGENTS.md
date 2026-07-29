@@ -20,8 +20,15 @@ Welcome AI Agent. This repository contains a production-grade Model Context Prot
    - Every new electrical or weight calculation function added to `src/utils/formulas.ts` MUST have a corresponding unit test in `tests/unit/`.
    - PRs with failing unit or E2E tests will not be merged.
 
+5. **Pre-Commit Verification**:
+   - Before committing any code change, run `pnpm lint` and `pnpm test` (or the more targeted `pnpm tsc --noEmit`, `pnpm test:unit`, `pnpm test:e2e`).
+   - If lint or tests fail, fix the underlying issues first, then re-run lint and tests to confirm they pass before committing.
+   - Never commit code with known failing lint or test results.
+
 ## Command Reference
+- **Run Lint:** `pnpm lint`
 - **Run Unit Tests:** `pnpm test:unit`
 - **Run E2E Tests:** `pnpm test:e2e`
+- **Run All Tests:** `pnpm test`
 - **Local Worker Dev:** `pnpm dev`
 - **Apply Local D1 Migrations:** `npx wrangler d1 migrations apply DB --local`
