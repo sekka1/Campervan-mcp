@@ -44,3 +44,9 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Test Deployed MCP Endpoints
+        env:
+          BASE_URL: https://campervan-mcp-server.garlandk.workers.dev
+          READY_WAIT: 60
+        run: ./scripts/test-mcp-endpoints.sh
