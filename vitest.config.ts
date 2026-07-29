@@ -4,11 +4,11 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
-    include: ["tests/**/*.test.ts"],
+    include: ["tests/**/*.test.ts", "scripts/**/*.test.ts"],
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "html"],
-      include: ["src/utils/formulas.ts"],
+      include: ["src/utils/formulas.ts", "scripts/ingest-manuals.ts"],
       exclude: [],
       thresholds: {
         lines: 90,

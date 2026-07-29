@@ -142,10 +142,34 @@ pnpm deploy
 
 ## Ingesting Documentation
 
-Vectorize search results are populated from PDF/HTML manuals using the ingestion script:
+### Automated PDF Manual Ingestion (GitOps)
+
+PDF manuals placed in `docs/manuals/*.pdf` are automatically parsed, chunked, embedded, and
+synced to the `van_manuals_index` Vectorize index by the `.github/workflows/ingest-manuals.yml`
+workflow whenever they are added, modified, or deleted on `main`. PDF parsing and chunking happen
+in the GitHub Actions runner (not the Cloudflare Worker) to avoid edge CPU limits.
 
 ```bash
-npx wrangler vectorize create van_manuals_index --dimensions=384 --metric=cosine
+npx wrangler vectorize create van_manuals_index --dimensions=768 --metric=cosine
+
+# Ingest / update manuals
+npx tsx scripts/ingest-manuals.ts --added-modified "docs/manuals/velit-heater-manual.pdf"
+
+# Remove manuals that were deleted
+npx tsx scripts/ingest-manuals.ts --deleted "docs/manuals/old-manual.pdf"
+```
+
+Each chunk is embedded via the Cloudflare Workers AI REST API (`@cf/baai/bge-base-en-v1.5`,
+768 dimensions) and upserted into Vectorize with a deterministic vector ID
+(`{sanitized_filename}#chunk_{index}`), so re-ingesting an updated manual overwrites its
+previous chunks. Requires `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` environment
+variables.
+
+### Legacy Ad-Hoc Ingestion Script
+
+Older HTML/PDF sources can still be ingested individually using the legacy script:
+
+```bash
 npx tsx scripts/ingest-docs.ts --source ./docs/transit-body-builder.pdf --name ford_transit_body_builder
 ```
 
