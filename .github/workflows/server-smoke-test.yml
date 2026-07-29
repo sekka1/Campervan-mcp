@@ -1,0 +1,39 @@
+name: MCP Server Smoke Test
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    branches: [ main, develop ]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install Dependencies
+        run: pnpm install
+
+      - name: Run MCP Server Smoke Test
+        run: ./scripts/smoke-test-server.sh
+
+      - name: Upload wrangler dev log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wrangler-dev-log
+          path: /tmp/wrangler-dev-log.*
+          if-no-files-found: ignore

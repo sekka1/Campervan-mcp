@@ -96,6 +96,21 @@ pnpm test:e2e       # end-to-end tests only
 pnpm test:coverage  # unit tests with coverage
 ```
 
+### Server Smoke Test
+
+`scripts/smoke-test-server.sh` spins up the worker locally with `wrangler dev`,
+applies local D1 migrations, and exercises the live MCP JSON-RPC endpoints
+(`initialize`, `tools/list`, and several `tools/call` requests) to verify the
+server actually runs end-to-end. Run it locally:
+
+```bash
+./scripts/smoke-test-server.sh
+```
+
+This same script runs in the [`MCP Server Smoke Test`](./.github/workflows/server-smoke-test.yml)
+GitHub Actions workflow, which can be triggered manually (`workflow_dispatch`)
+or automatically on pull requests.
+
 ## Linting
 
 ```bash
