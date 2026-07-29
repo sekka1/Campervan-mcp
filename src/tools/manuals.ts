@@ -6,18 +6,20 @@ import { searchManuals } from "../utils/db.js";
  * Simple embedding generation using Cloudflare AI text embeddings.
  * Falls back to a zero vector if AI binding is unavailable (e.g., local dev).
  *
- * In production, this should use the `@cf/baai/bge-small-en-v1.5` model
- * via the `AI` binding, which produces 384-dimensional vectors.
+ * Uses the `@cf/baai/bge-base-en-v1.5` model via the `AI` binding, which
+ * produces 768-dimensional vectors, matching the dimensionality of the
+ * `van_manuals_index` Vectorize index populated by
+ * `scripts/ingest-manuals.ts` and the ingest-manuals GitHub Actions workflow.
  */
 async function generateEmbedding(text: string, ai?: Ai): Promise<number[]> {
   if (ai) {
-    const response = await ai.run("@cf/baai/bge-small-en-v1.5", { text: [text] });
+    const response = await ai.run("@cf/baai/bge-base-en-v1.5", { text: [text] });
     const result = response as unknown as { data: number[][] };
     return result.data[0];
   }
 
   // Fallback: return zero vector for development/testing
-  return new Array(384).fill(0) as number[];
+  return new Array(768).fill(0) as number[];
 }
 
 export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex, ai?: Ai): void {
