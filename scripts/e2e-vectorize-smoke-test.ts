@@ -34,6 +34,8 @@ import {
   queryVectors,
   upsertVectors,
   deleteVectorsByIds,
+  batchArray,
+  VECTORIZE_DELETE_BATCH_SIZE,
   type VectorizeVector,
 } from "./ingest-manuals";
 import { buildR2DeleteCandidateIds, buildR2ManualChunks, createR2Client, R2_BUCKET_NAME } from "./sync-r2-manuals";
@@ -68,9 +70,11 @@ async function main(): Promise<void> {
 
   const cleanup = async (): Promise<void> => {
     console.log("Cleaning up e2e test artifacts...");
-    await deleteVectorsByIds(accountId, apiToken, chunkIds).catch((err) =>
-      console.error("  Warning: failed to delete test vectors:", err instanceof Error ? err.message : err)
-    );
+    for (const batch of batchArray(chunkIds, VECTORIZE_DELETE_BATCH_SIZE)) {
+      await deleteVectorsByIds(accountId, apiToken, batch).catch((err) =>
+        console.error("  Warning: failed to delete test vectors:", err instanceof Error ? err.message : err)
+      );
+    }
     await r2Client
       .send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }))
       .catch((err) => console.error("  Warning: failed to delete test R2 object:", err instanceof Error ? err.message : err));
@@ -130,7 +134,9 @@ async function main(): Promise<void> {
 
     // 6. Delete the vectors and the R2 object.
     console.log("[6/6] Deleting vectors and R2 object...");
-    await deleteVectorsByIds(accountId, apiToken, chunkIds);
+    for (const batch of batchArray(chunkIds, VECTORIZE_DELETE_BATCH_SIZE)) {
+      await deleteVectorsByIds(accountId, apiToken, batch);
+    }
     await r2Client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }));
 
     console.log("✓ E2E Vectorize smoke test passed.");

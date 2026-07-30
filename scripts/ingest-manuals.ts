@@ -46,7 +46,7 @@ export const CHUNK_OVERLAP_CHARS = 50;
 
 export const EMBEDDING_BATCH_SIZE = 25;
 export const VECTORIZE_BATCH_SIZE = 100;
-export const VECTORIZE_DELETE_BATCH_SIZE = 500;
+export const VECTORIZE_DELETE_BATCH_SIZE = 100;
 
 /** Generous upper bound on chunks-per-manual used to build deterministic
  * delete candidate IDs. Vectorize ignores IDs that don't exist, so this only
