@@ -212,8 +212,9 @@ manifest persisted in R2, and stream/chunk/embed/upsert only the added or modifi
 deleting vectors for any PDFs removed from the bucket.
 
 ```bash
-# Sync R2 bucket manuals (uses CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN for both
-# R2 S3-compatible access and the Workers AI / Vectorize REST APIs)
+# Sync R2 bucket manuals (uses R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY for the R2
+# S3-compatible access, and CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN for the
+# Workers AI / Vectorize REST APIs)
 npx tsx scripts/sync-r2-manuals.ts
 
 # Preview the diff without embedding/upserting anything

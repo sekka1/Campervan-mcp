@@ -143,12 +143,13 @@ describe("getR2Endpoint", () => {
 });
 
 describe("createR2Client", () => {
-  it("constructs an S3Client with account ID and API token as credentials", () => {
-    createR2Client("acct123", "token123");
+  it("constructs an S3Client with R2 access key ID and secret access key as credentials", () => {
+    createR2Client("acct123", "r2-access-key", "r2-secret-key");
     expect(vi.mocked(S3Client)).toHaveBeenCalledWith(
       expect.objectContaining({
         region: "auto",
-        credentials: { accessKeyId: "acct123", secretAccessKey: "token123" },
+        endpoint: "https://acct123.r2.cloudflarestorage.com",
+        credentials: { accessKeyId: "r2-access-key", secretAccessKey: "r2-secret-key" },
       })
     );
   });
@@ -461,6 +462,8 @@ describe("runSync", () => {
   const originalFetch = global.fetch;
   const originalAccountId = process.env["CLOUDFLARE_ACCOUNT_ID"];
   const originalApiToken = process.env["CLOUDFLARE_API_TOKEN"];
+  const originalR2AccessKeyId = process.env["R2_ACCESS_KEY_ID"];
+  const originalR2SecretAccessKey = process.env["R2_SECRET_ACCESS_KEY"];
 
   beforeEach(() => {
     sendMock.mockReset();
@@ -468,12 +471,16 @@ describe("runSync", () => {
     vi.mocked(mkdtempSync).mockReturnValue("/tmp/r2-manual-mock");
     process.env["CLOUDFLARE_ACCOUNT_ID"] = "acct123";
     process.env["CLOUDFLARE_API_TOKEN"] = "token123";
+    process.env["R2_ACCESS_KEY_ID"] = "r2-access-key";
+    process.env["R2_SECRET_ACCESS_KEY"] = "r2-secret-key";
   });
 
   afterEach(() => {
     global.fetch = originalFetch;
     process.env["CLOUDFLARE_ACCOUNT_ID"] = originalAccountId;
     process.env["CLOUDFLARE_API_TOKEN"] = originalApiToken;
+    process.env["R2_ACCESS_KEY_ID"] = originalR2AccessKeyId;
+    process.env["R2_SECRET_ACCESS_KEY"] = originalR2SecretAccessKey;
     vi.mocked(S3Client).mockImplementation(() => ({ send: sendMock }) as unknown as S3Client);
   });
 
@@ -483,6 +490,15 @@ describe("runSync", () => {
 
     await expect(runSync({ dryRun: false, forceReindex: false })).rejects.toThrow(
       /CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN/
+    );
+  });
+
+  it("throws when R2 S3 credentials are missing", async () => {
+    delete process.env["R2_ACCESS_KEY_ID"];
+    delete process.env["R2_SECRET_ACCESS_KEY"];
+
+    await expect(runSync({ dryRun: false, forceReindex: false })).rejects.toThrow(
+      /R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY/
     );
   });
 

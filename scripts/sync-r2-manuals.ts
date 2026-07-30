@@ -19,8 +19,11 @@
  *
  * Prerequisites:
  *   - CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN environment variables set
- *     (the API token is used both for the R2 S3-compatible API and for the
- *     Workers AI / Vectorize REST APIs)
+ *     (the API token is used for the Workers AI / Vectorize REST APIs)
+ *   - R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY environment variables set
+ *     (standard S3-compatible credentials generated from Cloudflare
+ *     Dashboard > R2 > Manage R2 API Tokens; used exclusively to
+ *     authenticate the S3 client against the R2 bucket)
  *   - R2 bucket created and populated with PDFs (nested subfolders allowed)
  *   - Vectorize index created:
  *       npx wrangler vectorize create van_manuals_index --dimensions=768 --metric=cosine
@@ -96,15 +99,15 @@ export interface SyncDelta {
 // R2 Client
 // ---------------------------------------------------------------------------
 
-export function createR2Client(accountId: string, apiToken: string): S3Client {
+export function createR2Client(accountId: string, accessKeyId: string, secretAccessKey: string): S3Client {
   return new S3Client({
     region: "auto",
     endpoint: getR2Endpoint(accountId),
     // R2 (and our local E2E mock server) only support path-style requests.
     forcePathStyle: true,
     credentials: {
-      accessKeyId: accountId,
-      secretAccessKey: apiToken,
+      accessKeyId,
+      secretAccessKey,
     },
   });
 }
@@ -362,12 +365,18 @@ export async function runSync(options: SyncOptions): Promise<void> {
 
   const accountId = process.env["CLOUDFLARE_ACCOUNT_ID"];
   const apiToken = process.env["CLOUDFLARE_API_TOKEN"];
+  const r2AccessKeyId = process.env["R2_ACCESS_KEY_ID"];
+  const r2SecretAccessKey = process.env["R2_SECRET_ACCESS_KEY"];
 
   if (!accountId || !apiToken) {
     throw new Error("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN environment variables are required.");
   }
 
-  const r2Client = createR2Client(accountId, apiToken);
+  if (!r2AccessKeyId || !r2SecretAccessKey) {
+    throw new Error("R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY environment variables are required.");
+  }
+
+  const r2Client = createR2Client(accountId, r2AccessKeyId, r2SecretAccessKey);
 
   console.log(`Listing objects in R2 bucket "${R2_BUCKET_NAME}"...`);
   const allObjects = await listAllR2Objects(r2Client, R2_BUCKET_NAME);
