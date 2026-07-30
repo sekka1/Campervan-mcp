@@ -126,9 +126,19 @@ export function sanitizeFilename(filePath: string): string {
   return basename(filePath).replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
+/**
+ * Cloudflare Vectorize enforces a hard 64-byte limit on vector IDs. Sanitized
+ * filenames are truncated to this length before the `#chunk_<index>` suffix
+ * is appended so the resulting ID always stays comfortably under that cap,
+ * even for long original filenames. The full original filename is preserved
+ * separately in the vector's `metadata.filename` field.
+ */
+export const MAX_SANITIZED_NAME_LENGTH = 40;
+
 /** Builds the deterministic vector ID for a given chunk of a manual. */
 export function generateChunkId(sanitizedName: string, index: number): string {
-  return `${sanitizedName}#chunk_${index}`;
+  const truncatedName = sanitizedName.slice(0, MAX_SANITIZED_NAME_LENGTH).replace(/_+$/g, "");
+  return `${truncatedName}#chunk_${index}`;
 }
 
 /** Derives a human-readable manual title from a filename. */

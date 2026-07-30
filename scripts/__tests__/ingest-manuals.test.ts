@@ -63,6 +63,21 @@ describe("generateChunkId", () => {
     expect(generateChunkId("velit_heater_manual_pdf", 42)).toBe("velit_heater_manual_pdf#chunk_42");
     expect(generateChunkId("velit_heater_manual_pdf", 0)).toBe("velit_heater_manual_pdf#chunk_0");
   });
+
+  it("truncates long sanitized filenames so the ID stays under Vectorize's 64-byte limit", () => {
+    const sanitizedName = sanitizeFilename(
+      "MY24_Transit _BEMM_V363N_20APR24_J2_V2_R2_(downloaded_30JUL24).pdf"
+    );
+    const id = generateChunkId(sanitizedName, 0);
+
+    expect(Buffer.byteLength(id, "utf8")).toBeLessThanOrEqual(64);
+    expect(id).toBe("MY24_Transit_BEMM_V363N_20APR24_J2_V2_R2#chunk_0");
+  });
+
+  it("does not leave a trailing underscore when truncating on a separator boundary", () => {
+    const id = generateChunkId("a".repeat(40) + "_", 5);
+    expect(id).toBe(`${"a".repeat(40)}#chunk_5`);
+  });
 });
 
 describe("deriveManualTitle", () => {
