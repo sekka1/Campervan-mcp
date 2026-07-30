@@ -13,7 +13,7 @@ vi.mock("unpdf", () => ({
 }));
 
 import { readFileSync } from "node:fs";
-import { extractText } from "unpdf";
+import { extractText, getDocumentProxy } from "unpdf";
 import {
   batchArray,
   buildDeleteCandidateIds,
@@ -23,12 +23,14 @@ import {
   classifyDocPath,
   deleteVectorsByIds,
   deriveManualTitle,
+  describeApiFailure,
   EMBEDDING_BATCH_SIZE,
   EMBEDDING_MODEL,
   generateChunkId,
   generateEmbeddings,
   MAX_DELETE_CANDIDATE_CHUNKS,
   parseArgs,
+  PDF_PARSE_VERBOSITY,
   processAddedModifiedFile,
   processDeletedFile,
   recursiveSplitText,
@@ -235,6 +237,23 @@ describe("batchArray", () => {
   });
 });
 
+describe("describeApiFailure", () => {
+  it("appends a credentials troubleshooting hint for 401 responses", () => {
+    expect(describeApiFailure(401, "Unauthorized")).toBe(
+      "401 Unauthorized (verify CLOUDFLARE_ACCOUNT_ID and that CLOUDFLARE_API_TOKEN has Workers AI + Vectorize edit permissions and has not expired)"
+    );
+  });
+
+  it("appends a credentials troubleshooting hint for 403 responses", () => {
+    expect(describeApiFailure(403, "Forbidden")).toContain("CLOUDFLARE_API_TOKEN");
+  });
+
+  it("does not append a hint for other status codes", () => {
+    expect(describeApiFailure(500, "Internal Server Error")).toBe("500 Internal Server Error");
+    expect(describeApiFailure(400, "Bad Request")).toBe("400 Bad Request");
+  });
+});
+
 describe("buildDeleteCandidateIds", () => {
   it("generates the deterministic ID prefix for every candidate chunk index", () => {
     const ids = buildDeleteCandidateIds("docs/manuals/old-manual.pdf", 5);
@@ -339,7 +358,7 @@ describe("generateEmbeddings", () => {
     global.fetch = vi.fn(async () => new Response("Unauthorized", { status: 401 })) as unknown as typeof fetch;
 
     await expect(generateEmbeddings(["chunk"], "acct123", "badtoken")).rejects.toThrow(
-      /Workers AI embedding request failed: 401/
+      /Workers AI embedding request failed: 401.*CLOUDFLARE_API_TOKEN/
     );
   });
 });
@@ -511,6 +530,14 @@ describe("processAddedModifiedFile", () => {
 
     expect(calledUrls.some((url) => url.includes("/ai/run/"))).toBe(true);
     expect(calledUrls.some((url) => url.includes("/upsert"))).toBe(true);
+  });
+
+  it("calls getDocumentProxy with errors-only verbosity to suppress benign PDF.js warning spam", async () => {
+    global.fetch = vi.fn(async () => new Response("{}", { status: 200 })) as unknown as typeof fetch;
+
+    await processAddedModifiedFile("tests/fixtures/sample-manual.pdf", "acct123", "token123", true);
+
+    expect(getDocumentProxy).toHaveBeenCalledWith(expect.any(Uint8Array), { verbosity: PDF_PARSE_VERBOSITY });
   });
 });
 

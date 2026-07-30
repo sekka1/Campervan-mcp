@@ -27,6 +27,8 @@ vi.mock("unpdf", () => ({
 
 import { NoSuchKey, S3Client } from "@aws-sdk/client-s3";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { getDocumentProxy } from "unpdf";
+import { PDF_PARSE_VERBOSITY } from "../ingest-manuals";
 import {
   buildR2DeleteCandidateIds,
   buildR2ManualChunks,
@@ -451,6 +453,13 @@ describe("processAddedModifiedR2Object", () => {
     ).rejects.toThrow("bad pdf");
 
     expect(vi.mocked(rmSync)).toHaveBeenCalled();
+  });
+
+  it("calls getDocumentProxy with errors-only verbosity to suppress benign PDF.js warning spam", async () => {
+    const client = new S3Client({});
+    await processAddedModifiedR2Object(client, "campervan-mcp", "heaters/velit-2026.pdf", "acct123", "token123", true);
+
+    expect(getDocumentProxy).toHaveBeenCalledWith(expect.any(Uint8Array), { verbosity: PDF_PARSE_VERBOSITY });
   });
 });
 
