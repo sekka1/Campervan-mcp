@@ -33,6 +33,7 @@ import {
   PDF_PARSE_VERBOSITY,
   processAddedModifiedFile,
   processDeletedFile,
+  queryVectors,
   recursiveSplitText,
   runIngestion,
   sanitizeFilename,
@@ -62,6 +63,21 @@ describe("generateChunkId", () => {
   it("formats deterministic chunk IDs", () => {
     expect(generateChunkId("velit_heater_manual_pdf", 42)).toBe("velit_heater_manual_pdf#chunk_42");
     expect(generateChunkId("velit_heater_manual_pdf", 0)).toBe("velit_heater_manual_pdf#chunk_0");
+  });
+
+  it("truncates long sanitized filenames so the ID stays under Vectorize's 64-byte limit", () => {
+    const sanitizedName = sanitizeFilename(
+      "MY24_Transit _BEMM_V363N_20APR24_J2_V2_R2_(downloaded_30JUL24).pdf"
+    );
+    const id = generateChunkId(sanitizedName, 0);
+
+    expect(Buffer.byteLength(id, "utf8")).toBeLessThanOrEqual(64);
+    expect(id).toBe("MY24_Transit_BEMM_V363N_20APR24_J2_V2_R2#chunk_0");
+  });
+
+  it("does not leave a trailing underscore when truncating on a separator boundary", () => {
+    const id = generateChunkId("a".repeat(40) + "_", 5);
+    expect(id).toBe(`${"a".repeat(40)}#chunk_5`);
   });
 });
 
@@ -451,6 +467,44 @@ describe("deleteVectorsByIds", () => {
 
     await expect(deleteVectorsByIds("acct123", "token123", ["a#chunk_0"])).rejects.toThrow(
       /Vectorize delete request failed: 404/
+    );
+  });
+});
+
+describe("queryVectors", () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("sends the query request and returns matches", async () => {
+    const mockFetch = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      expect(url.toString()).toBe(
+        `https://api.cloudflare.com/client/v4/accounts/acct123/vectorize/v2/indexes/${VECTORIZE_INDEX_NAME}/query`
+      );
+      const body = JSON.parse(init?.body as string);
+      expect(body).toMatchObject({ vector: [0.1, 0.2], topK: 5, returnMetadata: "all" });
+
+      return new Response(
+        JSON.stringify({ result: { matches: [{ id: "a#chunk_0", score: 0.99, metadata: { text: "a" } }] } }),
+        { status: 200 }
+      );
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const matches = await queryVectors("acct123", "token123", [0.1, 0.2]);
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(matches).toEqual([{ id: "a#chunk_0", score: 0.99, metadata: { text: "a" } }]);
+  });
+
+  it("throws a clean error on a non-2xx Vectorize response", async () => {
+    global.fetch = vi.fn(async () => new Response("Bad Request", { status: 400 })) as unknown as typeof fetch;
+
+    await expect(queryVectors("acct123", "token123", [0.1])).rejects.toThrow(
+      /Vectorize query request failed: 400/
     );
   });
 });

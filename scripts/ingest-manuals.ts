@@ -46,7 +46,7 @@ export const CHUNK_OVERLAP_CHARS = 50;
 
 export const EMBEDDING_BATCH_SIZE = 25;
 export const VECTORIZE_BATCH_SIZE = 100;
-export const VECTORIZE_DELETE_BATCH_SIZE = 500;
+export const VECTORIZE_DELETE_BATCH_SIZE = 100;
 
 /** Generous upper bound on chunks-per-manual used to build deterministic
  * delete candidate IDs. Vectorize ignores IDs that don't exist, so this only
@@ -126,9 +126,19 @@ export function sanitizeFilename(filePath: string): string {
   return basename(filePath).replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
+/**
+ * Cloudflare Vectorize enforces a hard 64-byte limit on vector IDs. Sanitized
+ * filenames are truncated to this length before the `#chunk_<index>` suffix
+ * is appended so the resulting ID always stays comfortably under that cap,
+ * even for long original filenames. The full original filename is preserved
+ * separately in the vector's `metadata.filename` field.
+ */
+export const MAX_SANITIZED_NAME_LENGTH = 40;
+
 /** Builds the deterministic vector ID for a given chunk of a manual. */
 export function generateChunkId(sanitizedName: string, index: number): string {
-  return `${sanitizedName}#chunk_${index}`;
+  const truncatedName = sanitizedName.slice(0, MAX_SANITIZED_NAME_LENGTH).replace(/_+$/g, "");
+  return `${truncatedName}#chunk_${index}`;
 }
 
 /** Derives a human-readable manual title from a filename. */
@@ -368,6 +378,46 @@ export async function deleteVectorsByIds(
       `Vectorize delete request failed: ${describeApiFailure(response.status, await response.text())}`
     );
   }
+}
+
+export interface VectorizeQueryMatch {
+  id: string;
+  score: number;
+  metadata: Record<string, unknown>;
+}
+
+/** Queries the Vectorize index for the vectors nearest to `vector`. Used by the E2E smoke test to verify newly-upserted vectors are retrievable. */
+export async function queryVectors(
+  accountId: string,
+  apiToken: string,
+  vector: number[],
+  options: { topK?: number; returnMetadata?: "none" | "indexed" | "all" } = {},
+  indexName: string = VECTORIZE_INDEX_NAME
+): Promise<VectorizeQueryMatch[]> {
+  const response = await fetch(
+    `${CLOUDFLARE_API_BASE}/${accountId}/vectorize/v2/indexes/${indexName}/query`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + apiToken,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        vector,
+        topK: options.topK ?? 5,
+        returnMetadata: options.returnMetadata ?? "all",
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Vectorize query request failed: ${describeApiFailure(response.status, await response.text())}`
+    );
+  }
+
+  const data = (await response.json()) as { result: { matches: VectorizeQueryMatch[] } };
+  return data.result.matches;
 }
 
 /** Builds the full set of deterministic candidate chunk IDs to delete for a removed manual. */
