@@ -380,6 +380,46 @@ export async function deleteVectorsByIds(
   }
 }
 
+export interface VectorizeQueryMatch {
+  id: string;
+  score: number;
+  metadata: Record<string, unknown>;
+}
+
+/** Queries the Vectorize index for the vectors nearest to `vector`. Used by the E2E smoke test to verify newly-upserted vectors are retrievable. */
+export async function queryVectors(
+  accountId: string,
+  apiToken: string,
+  vector: number[],
+  options: { topK?: number; returnMetadata?: "none" | "indexed" | "all" } = {},
+  indexName: string = VECTORIZE_INDEX_NAME
+): Promise<VectorizeQueryMatch[]> {
+  const response = await fetch(
+    `${CLOUDFLARE_API_BASE}/${accountId}/vectorize/v2/indexes/${indexName}/query`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + apiToken,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        vector,
+        topK: options.topK ?? 5,
+        returnMetadata: options.returnMetadata ?? "all",
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Vectorize query request failed: ${describeApiFailure(response.status, await response.text())}`
+    );
+  }
+
+  const data = (await response.json()) as { result: { matches: VectorizeQueryMatch[] } };
+  return data.result.matches;
+}
+
 /** Builds the full set of deterministic candidate chunk IDs to delete for a removed manual. */
 export function buildDeleteCandidateIds(
   filePath: string,
