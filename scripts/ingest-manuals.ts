@@ -53,6 +53,15 @@ export const VECTORIZE_DELETE_BATCH_SIZE = 500;
  * needs to be larger than the largest manual we expect to ingest. */
 export const MAX_DELETE_CANDIDATE_CHUNKS = 2000;
 
+/**
+ * PDF.js verbosity level passed to `getDocumentProxy`. Restricting this to
+ * "errors only" (0) suppresses noisy, non-fatal `Warning: TypeError:
+ * Math.sumPrecise is not a function` log spam emitted by the bundled PDF.js
+ * build (it feature-detects a not-yet-standard `Math.sumPrecise` API and
+ * safely falls back when unavailable) without hiding genuine parsing errors.
+ */
+export const PDF_PARSE_VERBOSITY = 0;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -256,6 +265,19 @@ export function batchArray<T>(items: T[], batchSize: number): T[][] {
   return batches;
 }
 
+/**
+ * Appends a troubleshooting hint to API error messages when the failure is
+ * an authentication/authorization error (401/403), since these are almost
+ * always caused by a missing/expired/under-scoped CLOUDFLARE_API_TOKEN
+ * rather than a bug in the calling code.
+ */
+export function describeApiFailure(status: number, body: string): string {
+  if (status === 401 || status === 403) {
+    return `${status} ${body} (verify CLOUDFLARE_ACCOUNT_ID and that CLOUDFLARE_API_TOKEN has Workers AI + Vectorize edit permissions and has not expired)`;
+  }
+  return `${status} ${body}`;
+}
+
 // ---------------------------------------------------------------------------
 // Cloudflare Workers AI - Embedding Generation
 // ---------------------------------------------------------------------------
@@ -275,7 +297,9 @@ export async function generateEmbeddings(
   });
 
   if (!response.ok) {
-    throw new Error(`Workers AI embedding request failed: ${response.status} ${await response.text()}`);
+    throw new Error(
+      `Workers AI embedding request failed: ${describeApiFailure(response.status, await response.text())}`
+    );
   }
 
   const data = (await response.json()) as { result: { data: number[][] } };
@@ -311,7 +335,9 @@ export async function upsertVectors(
   );
 
   if (!response.ok) {
-    throw new Error(`Vectorize upsert request failed: ${response.status} ${await response.text()}`);
+    throw new Error(
+      `Vectorize upsert request failed: ${describeApiFailure(response.status, await response.text())}`
+    );
   }
 }
 
@@ -338,7 +364,9 @@ export async function deleteVectorsByIds(
   );
 
   if (!response.ok) {
-    throw new Error(`Vectorize delete request failed: ${response.status} ${await response.text()}`);
+    throw new Error(
+      `Vectorize delete request failed: ${describeApiFailure(response.status, await response.text())}`
+    );
   }
 }
 
@@ -425,7 +453,7 @@ export async function processAddedModifiedFile(
 ): Promise<void> {
   const absolutePath = resolve(process.cwd(), filePath);
   const buffer = readFileSync(absolutePath);
-  const pdf = await getDocumentProxy(new Uint8Array(buffer));
+  const pdf = await getDocumentProxy(new Uint8Array(buffer), { verbosity: PDF_PARSE_VERBOSITY });
   const { text } = await extractText(pdf, { mergePages: true });
 
   const chunks = buildManualChunks(filePath, text);

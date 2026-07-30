@@ -49,6 +49,7 @@ import {
   generateChunkId,
   generateEmbeddings,
   MAX_DELETE_CANDIDATE_CHUNKS,
+  PDF_PARSE_VERBOSITY,
   recursiveSplitText,
   upsertVectors,
   VECTORIZE_BATCH_SIZE,
@@ -304,7 +305,7 @@ export async function processAddedModifiedR2Object(
   let chunks: ManualChunk[];
   try {
     const buffer = readFileSync(tempPath);
-    const pdf = await getDocumentProxy(new Uint8Array(buffer));
+    const pdf = await getDocumentProxy(new Uint8Array(buffer), { verbosity: PDF_PARSE_VERBOSITY });
     const { text } = await extractText(pdf, { mergePages: true });
     chunks = buildR2ManualChunks(key, text);
   } finally {
