@@ -195,6 +195,8 @@ describe("sync-r2-manuals E2E pipeline", () => {
       CF_API_BASE_URL: cfMock.baseUrl,
       CLOUDFLARE_ACCOUNT_ID: "test-account",
       CLOUDFLARE_API_TOKEN: "test-token",
+      R2_ACCESS_KEY_ID: "test-r2-access-key",
+      R2_SECRET_ACCESS_KEY: "test-r2-secret-key",
     });
 
     expect(exitCode).toBe(0);
@@ -234,6 +236,8 @@ describe("sync-r2-manuals E2E pipeline", () => {
       CF_API_BASE_URL: cfMock.baseUrl,
       CLOUDFLARE_ACCOUNT_ID: "test-account",
       CLOUDFLARE_API_TOKEN: "test-token",
+      R2_ACCESS_KEY_ID: "test-r2-access-key",
+      R2_SECRET_ACCESS_KEY: "test-r2-secret-key",
     });
 
     expect(exitCode).toBe(0);
@@ -256,6 +260,8 @@ describe("sync-r2-manuals E2E pipeline", () => {
       CF_API_BASE_URL: cfMock.baseUrl,
       CLOUDFLARE_ACCOUNT_ID: "test-account",
       CLOUDFLARE_API_TOKEN: "test-token",
+      R2_ACCESS_KEY_ID: "test-r2-access-key",
+      R2_SECRET_ACCESS_KEY: "test-r2-secret-key",
     });
 
     expect(exitCode).toBe(0);
@@ -284,6 +290,8 @@ describe("sync-r2-manuals E2E pipeline", () => {
       CF_API_BASE_URL: cfMock.baseUrl,
       CLOUDFLARE_ACCOUNT_ID: "test-account",
       CLOUDFLARE_API_TOKEN: "test-token",
+      R2_ACCESS_KEY_ID: "test-r2-access-key",
+      R2_SECRET_ACCESS_KEY: "test-r2-secret-key",
     });
 
     expect(exitCode).toBe(0);
@@ -309,6 +317,8 @@ describe("sync-r2-manuals E2E pipeline", () => {
       CF_API_BASE_URL: cfMock.baseUrl,
       CLOUDFLARE_ACCOUNT_ID: "test-account",
       CLOUDFLARE_API_TOKEN: "test-token",
+      R2_ACCESS_KEY_ID: "test-r2-access-key",
+      R2_SECRET_ACCESS_KEY: "test-r2-secret-key",
     });
 
     expect(exitCode).not.toBe(0);
