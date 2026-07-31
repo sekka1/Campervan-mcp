@@ -6,12 +6,19 @@ import {
 
 describe("calculateVoltageDrop", () => {
   describe("basic wire sizing", () => {
-    it("should recommend 10 AWG for 20A, 10ft, 12V with 3% drop", () => {
+    it("should recommend 8 AWG for 20A, 10ft, 12V with 3% drop", () => {
       const result = calculateVoltageDrop(20, 10, 12, 3);
-      expect(result.recommended_awg).toBeDefined();
+      // requiredCM = 21.4 * 20 * 10 / 0.36 = 11,888.9 CM -> smallest gauge meeting it is 8 AWG
+      expect(result.recommended_awg).toBe("8");
       expect(typeof result.recommended_awg).toBe("string");
       expect(result.voltage_drop_pct).toBeLessThanOrEqual(3);
       expect(result.fuse_size_amps).toBeGreaterThanOrEqual(20);
+    });
+
+    it("should recommend the smallest (thinnest) adequate gauge rather than always the largest", () => {
+      // A tiny 1A load over a short run should never need heavy 4/0 cable.
+      const result = calculateVoltageDrop(1, 10, 12, 3);
+      expect(result.recommended_awg).toBe("18");
     });
 
     it("should handle 12V system correctly", () => {

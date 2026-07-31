@@ -98,10 +98,14 @@ export function calculateVoltageDrop(
   const K = 21.4;
   const requiredCM = (K * currentAmps * lengthFeet) / allowableDropVolts;
 
-  // Find smallest AWG gauge that meets or exceeds required CM AND ampacity
-  const candidate = AWG_TABLE.find(
-    (spec) => spec.circularMils >= requiredCM && spec.maxAmps >= currentAmps
-  );
+  // Find smallest AWG gauge that meets or exceeds required CM AND ampacity.
+  // AWG_TABLE is ordered from largest gauge (most CM) to smallest, so we must
+  // search from the smallest gauge upward to find the *first* (thinnest, most
+  // economical) wire that satisfies both constraints, rather than always
+  // matching the largest gauge in the table.
+  const candidate = [...AWG_TABLE]
+    .reverse()
+    .find((spec) => spec.circularMils >= requiredCM && spec.maxAmps >= currentAmps);
 
   // Fall back to largest gauge in table if no candidate found
   const selected = candidate ?? AWG_TABLE[0];

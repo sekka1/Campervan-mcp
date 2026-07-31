@@ -42,10 +42,11 @@ import { queryComponentSpecs } from "../../src/utils/db";
 // ---------------------------------------------------------------------------
 
 describe("E2E: calculate_wire_gauge tool", () => {
-  it("should return valid wire gauge for typical van circuit (30A, 10ft, 12V)", () => {
+  // Scenario A: Standard low-voltage DC circuit (12V, 30A, 10ft one-way)
+  it("Scenario A: standard 12V DC branch (30A, 10ft, 3% drop) matches exact benchmark values", () => {
     const result = calculateVoltageDrop(30, 10, 12, 3);
 
-    // Verify the response has the expected structure a client would receive
+    // Verify the full response shape a client would receive
     const json = JSON.parse(JSON.stringify(result));
     expect(json).toMatchObject({
       recommended_awg: expect.any(String),
@@ -55,18 +56,69 @@ describe("E2E: calculate_wire_gauge tool", () => {
       conductor_resistance_ohms: expect.any(Number),
       notes: expect.any(String),
     });
+
+    // Exact benchmark values derived from the CM = (K x I x L) / E_drop formula
+    // (K=21.4, requiredCM = 21.4 * 30 * 10 / 0.36 = 17,833.3 CM -> next standard gauge is 6 AWG)
+    expect(result.recommended_awg).toBe("6");
+    expect(result.voltage_drop_volts).toBeCloseTo(0.237, 3);
+    expect(result.voltage_drop_pct).toBeCloseTo(1.98, 2);
+    expect(result.voltage_drop_pct).toBeLessThanOrEqual(3);
+    expect(result.fuse_size_amps).toBe(40);
+  });
+
+  // Scenario B: long-distance, high-current 48V run
+  it("Scenario B: high current / long run (50A, 20ft, 48V, 3% drop) matches exact benchmark values", () => {
+    const result = calculateVoltageDrop(50, 20, 48, 3);
+
+    // requiredCM = 21.4 * 50 * 20 / 1.44 = 14,861.1 CM -> next standard gauge is 8 AWG
+    expect(result.recommended_awg).toBe("8");
+    expect(result.voltage_drop_volts).toBeCloseTo(1.256, 3);
+    expect(result.voltage_drop_pct).toBeCloseTo(2.62, 2);
+    expect(result.voltage_drop_pct).toBeLessThanOrEqual(3);
+  });
+
+  // Scenario C: tight voltage drop requirement should force a larger (lower AWG number) wire
+  it("Scenario C: strict 1% drop requirement recommends a heavier gauge than 3% for the same circuit", () => {
+    const strict = calculateVoltageDrop(15, 50, 12, 1);
+    const relaxed = calculateVoltageDrop(15, 50, 12, 3);
+
+    // requiredCM (1%) = 21.4 * 15 * 50 / 0.12 = 133,750 CM -> next standard gauge is 3/0 AWG
+    expect(strict.recommended_awg).toBe("3/0");
+    expect(strict.voltage_drop_pct).toBeLessThanOrEqual(1);
+
+    // requiredCM (3%) = 21.4 * 15 * 50 / 0.36 = 44,583.3 CM -> next standard gauge is 2 AWG
+    expect(relaxed.recommended_awg).toBe("2");
+    expect(relaxed.voltage_drop_pct).toBeLessThanOrEqual(3);
+
+    // A stricter (lower) allowable drop percentage must never result in a thinner wire.
+    const awgTable = ["4/0", "3/0", "2/0", "1/0", "1", "2", "4", "6", "8", "10", "12", "14", "16", "18"];
+    expect(awgTable.indexOf(strict.recommended_awg)).toBeLessThan(
+      awgTable.indexOf(relaxed.recommended_awg)
+    );
+  });
+
+  // Scenario D: invalid inputs must fail predictably rather than returning NaN/Infinity
+  it("Scenario D: invalid current (0 or negative) throws instead of producing NaN/Infinity", () => {
+    expect(() => calculateVoltageDrop(0, 10, 12, 3)).toThrow("currentAmps must be positive");
+    expect(() => calculateVoltageDrop(-10, 10, 12, 3)).toThrow("currentAmps must be positive");
+  });
+
+  it("Scenario D: invalid length (0 or negative) throws instead of producing NaN/Infinity", () => {
+    expect(() => calculateVoltageDrop(30, 0, 12, 3)).toThrow("lengthFeet must be positive");
+    expect(() => calculateVoltageDrop(30, -5, 12, 3)).toThrow("lengthFeet must be positive");
   });
 
   it("should return safe fuse size for inverter circuit (150A, 5ft, 12V)", () => {
     const result = calculateVoltageDrop(150, 5, 12, 3);
     expect(result.fuse_size_amps).toBeGreaterThanOrEqual(187.5);
     expect(result.voltage_drop_pct).toBeLessThanOrEqual(3);
+    expect(result.recommended_awg).toBe("1/0");
   });
 
   it("should work for 48V lithium system (40A, 20ft)", () => {
     const result = calculateVoltageDrop(40, 20, 48, 3);
     expect(result.voltage_drop_pct).toBeLessThanOrEqual(3);
-    expect(result.recommended_awg).toBeDefined();
+    expect(result.recommended_awg).toBe("8");
   });
 });
 
