@@ -8,7 +8,7 @@
 # responsible for pointing BASE_URL at a reachable MCP server.
 #
 # This lets the same test assertions be reused against:
-#   - a locally spawned `wrangler dev` server (see scripts/smoke-test-server.sh)
+#   - a locally spawned `cf dev` server (see scripts/smoke-test-server.sh)
 #   - the deployed Cloudflare Workers server (see .github/workflows/deploy-production.yml)
 #
 # Usage:

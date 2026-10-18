@@ -23,7 +23,7 @@
  * Prerequisites:
  *   - CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN environment variables set
  *   - Vectorize index created:
- *       npx wrangler vectorize create van_manuals_index --dimensions=768 --metric=cosine
+ *       npx cf vectorize create --name=van_manuals_index --index-config-dimensions=768 --index-config-metric=cosine
  */
 
 import { readFileSync } from "node:fs";

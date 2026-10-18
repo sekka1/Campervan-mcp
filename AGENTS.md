@@ -31,4 +31,4 @@ Welcome AI Agent. This repository contains a production-grade Model Context Prot
 - **Run E2E Tests:** `pnpm test:e2e`
 - **Run All Tests:** `pnpm test`
 - **Local Worker Dev:** `pnpm dev`
-- **Apply Local D1 Migrations:** `npx wrangler d1 migrations apply DB --local`
+- **Apply Local D1 Migrations:** `npx cf d1 migrations apply 2aa73cfb-cf41-4ab3-b614-b0cf1eb7ec0c --dir d1/migrations --local --persist-to .wrangler/state` (the `cf` CLI; config lives in `cloudflare.config.ts`)

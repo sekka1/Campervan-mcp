@@ -49,7 +49,7 @@ tests/
 └── e2e/                 # End-to-end tests against the MCP HTTP endpoints
 ```
 
-The server binds to two Cloudflare resources (see `wrangler.toml`):
+The server binds to two Cloudflare resources (see `cloudflare.config.ts`):
 
 - **D1** (`DB`) — relational database of component specs.
 - **Vectorize** (`VECTOR_INDEX`) — vector index of chunked manual/documentation text, with an optional Workers AI (`AI`) binding for embeddings.
@@ -59,7 +59,7 @@ The server binds to two Cloudflare resources (see `wrangler.toml`):
 - [Node.js](https://nodejs.org/) >= 20
 - [pnpm](https://pnpm.io/)
 - A [Cloudflare account](https://dash.cloudflare.com/sign-up) with Workers, D1, and Vectorize enabled (for deployment)
-- [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/) (installed as a dev dependency)
+- [`cf` CLI](https://blog.cloudflare.com/cloudflare-cf-cli-launch) (installed as a dev dependency; it exposes the entire Cloudflare API and delegates builds to Wrangler, which is also a dev dependency). Configuration lives in `cloudflare.config.ts` (replaces `wrangler.toml`).
 
 ## Getting Started
 
@@ -78,7 +78,7 @@ pnpm dev
 Apply D1 migrations locally:
 
 ```bash
-npx wrangler d1 migrations apply DB --local
+npx cf d1 migrations apply 2aa73cfb-cf41-4ab3-b614-b0cf1eb7ec0c --dir d1/migrations --local --persist-to .wrangler/state
 ```
 
 Type-check the project:
@@ -98,7 +98,7 @@ pnpm test:coverage  # unit tests with coverage
 
 ### Server Smoke Test
 
-`scripts/smoke-test-server.sh` spins up the worker locally with `wrangler dev`,
+`scripts/smoke-test-server.sh` spins up the worker locally with `cf dev`,
 applies local D1 migrations, and exercises the live MCP JSON-RPC endpoints
 (`initialize`, `tools/list`, and several `tools/call` requests) to verify the
 server actually runs end-to-end. Run it locally:
@@ -129,14 +129,14 @@ Deployment uses two GitHub Actions pipelines with `CLOUDFLARE_ACCOUNT_ID` and
    the D1 database, the Vectorize index, and the `category`/`doc_type`
    metadata indexes on that Vectorize index (required for metadata filtering)
    if they don't already exist. Run it once from the **Actions** tab, then
-   copy the printed `database_id` into `wrangler.toml`, commit, and push to
+   copy the printed `id` into `cloudflare.config.ts` (and the D1 migration commands in the workflows), commit, and push to
    `main`.
 2. **[`Deploy to Production`](./.github/workflows/deploy-production.yml)**
    (runs automatically on every push to `main`) — applies any new D1
    migrations in `d1/migrations/` and deploys the Worker.
 
-To deploy manually instead, update `wrangler.toml` with your own D1
-`database_id`, then run:
+To deploy manually instead, update `cloudflare.config.ts` with your own D1
+`id`, then run:
 
 ```bash
 pnpm deploy
@@ -152,7 +152,7 @@ workflow whenever they are added, modified, or deleted on `main`. PDF parsing an
 in the GitHub Actions runner (not the Cloudflare Worker) to avoid edge CPU limits.
 
 ```bash
-npx wrangler vectorize create van_manuals_index --dimensions=768 --metric=cosine
+npx cf vectorize create --name=van_manuals_index --index-config-dimensions=768 --index-config-metric=cosine
 
 # Ingest / update manuals
 npx tsx scripts/ingest-manuals.ts --added-modified "docs/manuals/velit-heater-manual.pdf"
@@ -197,8 +197,8 @@ Filtering on `category`/`doc_type` requires Vectorize metadata indexes, which th
 `setup-infrastructure.yml` workflow creates automatically:
 
 ```bash
-npx wrangler vectorize create-metadata-index van_manuals_index --property-name=category --type=string
-npx wrangler vectorize create-metadata-index van_manuals_index --property-name=doc_type --type=string
+npx cf vectorize metadata-index create van_manuals_index --property-name=category --index-type=string
+npx cf vectorize metadata-index create van_manuals_index --property-name=doc_type --index-type=string
 ```
 
 ### Manual R2 Bucket Sync (Large Manuals)

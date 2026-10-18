@@ -26,7 +26,7 @@
  *     authenticate the S3 client against the R2 bucket)
  *   - R2 bucket created and populated with PDFs (nested subfolders allowed)
  *   - Vectorize index created:
- *       npx wrangler vectorize create van_manuals_index --dimensions=768 --metric=cosine
+ *       npx cf vectorize create --name=van_manuals_index --index-config-dimensions=768 --index-config-metric=cosine
  */
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

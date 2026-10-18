@@ -2,7 +2,7 @@
 #
 # scripts/smoke-test-server.sh
 #
-# Starts the Campervan MCP server locally (via `wrangler dev`), waits for it
+# Starts the Campervan MCP server locally (via `cf dev`), waits for it
 # to become ready, then delegates the actual MCP JSON-RPC endpoint assertions
 # to scripts/test-mcp-endpoints.sh. The shared endpoint script is also used
 # by the deploy-to-production workflow to test the live Cloudflare Worker,
@@ -20,7 +20,7 @@ set -euo pipefail
 PORT="${PORT:-8787}"
 BASE_URL="http://127.0.0.1:${PORT}"
 STARTUP_WAIT="${STARTUP_WAIT:-60}"
-LOG_FILE="$(mktemp -t wrangler-dev-log.XXXXXX)"
+LOG_FILE="$(mktemp -t cf-dev-log.XXXXXX)"
 SERVER_PID=""
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,15 +35,17 @@ cleanup() {
 trap cleanup EXIT
 
 echo "Applying local D1 migrations..."
-npx wrangler d1 migrations apply DB --local
+# Database ID must match the `DB` binding in cloudflare.config.ts
+D1_DATABASE_ID="${D1_DATABASE_ID:-2aa73cfb-cf41-4ab3-b614-b0cf1eb7ec0c}"
+npx cf d1 migrations apply "${D1_DATABASE_ID}" --dir d1/migrations --local --persist-to .wrangler/state
 
 echo "Starting local MCP server on port ${PORT}..."
-npx wrangler dev --port "${PORT}" > "${LOG_FILE}" 2>&1 &
+npx cf dev --port "${PORT}" > "${LOG_FILE}" 2>&1 &
 SERVER_PID=$!
 
 if ! BASE_URL="${BASE_URL}" READY_WAIT="${STARTUP_WAIT}" \
      "${SCRIPT_DIR}/test-mcp-endpoints.sh"; then
-  echo "----- wrangler dev log -----"
+  echo "----- cf dev log -----"
   cat "${LOG_FILE}"
   exit 1
 fi

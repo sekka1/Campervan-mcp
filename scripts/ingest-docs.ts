@@ -9,7 +9,7 @@
  *
  * Prerequisites:
  *   - CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN environment variables set
- *   - Vectorize index created: npx wrangler vectorize create van_manuals_index --dimensions=384 --metric=cosine
+ *   - Vectorize index created: npx cf vectorize create --name=van_manuals_index --index-config-dimensions=384 --index-config-metric=cosine
  *
  * Example:
  *   npx tsx scripts/ingest-docs.ts --source ./docs/transit-body-builder.pdf --name ford_transit_body_builder
