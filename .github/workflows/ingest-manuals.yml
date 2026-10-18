@@ -43,6 +43,7 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: "mock-account-id"
           CLOUDFLARE_API_TOKEN: "mock-token"
+          D1_DATABASE_ID: 2aa73cfb-cf41-4ab3-b614-b0cf1eb7ec0c
           ADDED_MODIFIED_FILES: "tests/fixtures/sample-manual.pdf"
         run: npx tsx scripts/ingest-manuals.ts --dry-run
 

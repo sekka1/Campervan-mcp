@@ -40,5 +40,6 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          D1_DATABASE_ID: 2aa73cfb-cf41-4ab3-b614-b0cf1eb7ec0c
           FORCE_REINDEX: ${{ inputs.force_reindex }}
         run: npx tsx scripts/sync-r2-manuals.ts
