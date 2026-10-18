@@ -30,7 +30,13 @@
 
 import { readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import { extractText, getDocumentProxy } from "unpdf";
+import { extractImages, extractText, getDocumentProxy } from "unpdf";
+import {
+  deriveSectionTitle,
+  prepareSchematics,
+  type EncodedSchematic,
+  type SchematicImage,
+} from "./schematics";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -89,6 +95,7 @@ export interface ManualChunkMetadata {
   text: string;
   chassis: string;
   subsystem: string;
+  section?: string;
 }
 
 export const SUBSYSTEMS = [
@@ -212,6 +219,7 @@ export interface ManualChunk {
   id: string;
   text: string;
   pageNumber: number;
+  sectionTitle: string | null;
   metadata: ManualChunkMetadata;
 }
 
@@ -388,17 +396,19 @@ export function buildChunksFromPages(input: BuildChunksInput): ManualChunk[] {
   const chassis = classifyChassis(input.classificationPath);
   const pages = Array.isArray(input.pages) ? input.pages : [input.pages];
 
-  const pieces: Array<{ text: string; pageNumber: number }> = [];
+  const pieces: Array<{ text: string; pageNumber: number; sectionTitle: string | null }> = [];
   pages.forEach((pageText, pageIndex) => {
+    const sectionTitle = deriveSectionTitle(pageText);
     for (const text of splitTextByWords(pageText)) {
-      pieces.push({ text, pageNumber: pageIndex + 1 });
+      pieces.push({ text, pageNumber: pageIndex + 1, sectionTitle });
     }
   });
 
-  return pieces.map(({ text, pageNumber }, index) => ({
+  return pieces.map(({ text, pageNumber, sectionTitle }, index) => ({
     id: generateChunkId(input.sanitizedName, index),
     text,
     pageNumber,
+    sectionTitle,
     metadata: {
       filename: input.filename,
       manual_title: input.title,
@@ -410,6 +420,7 @@ export function buildChunksFromPages(input: BuildChunksInput): ManualChunk[] {
       text,
       chassis,
       subsystem: classifySubsystem(text, input.classificationPath),
+      ...(sectionTitle ? { section: sectionTitle } : {}),
     },
   }));
 }
@@ -626,18 +637,25 @@ export function buildDocumentRecord(
 export function buildD1DeleteStatements(documentId: string): D1Statement[] {
   return [
     { sql: "DELETE FROM document_chunks WHERE document_id = ?", params: [documentId] },
+    { sql: "DELETE FROM schematic_images WHERE document_id = ?", params: [documentId] },
     { sql: "DELETE FROM documents WHERE id = ?", params: [documentId] },
   ];
 }
 
 /**
- * Statements that (re)write a document and its chunks. Existing chunks for the
- * document are removed first so a re-ingest never leaves stale rows behind.
- * `document_chunks.id` equals the Vectorize vector ID.
+ * Statements that (re)write a document, its schematic images and its chunks. Existing chunks
+ * and images for the document are removed first (chunks first, because they reference images)
+ * so a re-ingest never leaves stale rows behind. `document_chunks.id` equals the Vectorize
+ * vector ID, and each chunk links to the first schematic image on its page.
  */
-export function buildD1UpsertStatements(doc: D1DocumentRecord, chunks: ManualChunk[]): D1Statement[] {
+export function buildD1UpsertStatements(
+  doc: D1DocumentRecord,
+  chunks: ManualChunk[],
+  images: SchematicImage[] = []
+): D1Statement[] {
   const statements: D1Statement[] = [
     { sql: "DELETE FROM document_chunks WHERE document_id = ?", params: [doc.id] },
+    { sql: "DELETE FROM schematic_images WHERE document_id = ?", params: [doc.id] },
     {
       sql: `INSERT INTO documents (id, title, category, manufacturer, applicable_chassis, raw_r2_path)
 VALUES (?, ?, ?, ?, ?, ?)
@@ -648,23 +666,38 @@ ON CONFLICT(id) DO UPDATE SET title = excluded.title, category = excluded.catego
     },
   ];
 
+  const imageByPage = new Map<number, string>();
+  for (const image of images) {
+    if (!imageByPage.has(image.pageNumber)) imageByPage.set(image.pageNumber, image.id);
+    statements.push({
+      sql: `INSERT INTO schematic_images (id, document_id, page_number, caption, r2_key, mime_type, width, height)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET document_id = excluded.document_id, page_number = excluded.page_number,
+  caption = excluded.caption, r2_key = excluded.r2_key, mime_type = excluded.mime_type,
+  width = excluded.width, height = excluded.height`,
+      params: [image.id, doc.id, image.pageNumber, image.caption, image.r2Key, image.mimeType, image.width, image.height],
+    });
+  }
+
   for (const chunk of chunks) {
     const wordCount = chunk.text.split(/\s+/).filter(Boolean).length;
     statements.push({
-      sql: `INSERT INTO document_chunks (id, document_id, page_number, section_title, subsystem, chunk_text, word_count, token_count)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      sql: `INSERT INTO document_chunks (id, document_id, page_number, section_title, subsystem, chunk_text, word_count, token_count, schematic_image_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET document_id = excluded.document_id, page_number = excluded.page_number,
   section_title = excluded.section_title, subsystem = excluded.subsystem, chunk_text = excluded.chunk_text,
-  word_count = excluded.word_count, token_count = excluded.token_count`,
+  word_count = excluded.word_count, token_count = excluded.token_count,
+  schematic_image_id = excluded.schematic_image_id`,
       params: [
         chunk.id,
         doc.id,
         chunk.pageNumber,
-        null,
+        chunk.sectionTitle,
         chunk.metadata.subsystem,
         chunk.text,
         wordCount,
         Math.ceil(wordCount * TOKENS_PER_WORD),
+        imageByPage.get(chunk.pageNumber) ?? null,
       ],
     });
   }
@@ -692,6 +725,71 @@ export async function executeD1Statements(
     if (!response.ok) {
       throw new Error(`D1 query request failed: ${describeApiFailure(response.status, await response.text())}`);
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Schematic Images (extract from PDF -> upload to R2)
+// ---------------------------------------------------------------------------
+
+/** Uploads an object to R2 under the given key. */
+export type SchematicUploader = (key: string, bytes: Uint8Array, contentType: string) => Promise<void>;
+
+/** Default R2 bucket for schematic images (matches the manual bucket used by sync-r2-manuals). */
+export function getSchematicBucketName(env: NodeJS.ProcessEnv = process.env): string {
+  return env["R2_BUCKET_NAME"] || "campervan-mcp";
+}
+
+/** Uploader that writes to R2 through the Cloudflare REST API (no S3 credentials needed). */
+export function createRestSchematicUploader(
+  accountId: string,
+  apiToken: string,
+  bucket: string = getSchematicBucketName()
+): SchematicUploader {
+  return async (key, bytes, contentType) => {
+    const encodedKey = key.split("/").map(encodeURIComponent).join("/");
+    const response = await fetch(`${CLOUDFLARE_API_BASE}/${accountId}/r2/buckets/${bucket}/objects/${encodedKey}`, {
+      method: "PUT",
+      headers: { Authorization: "Bearer " + apiToken, "Content-Type": contentType },
+      body: bytes,
+    });
+    if (!response.ok) {
+      throw new Error(`R2 upload failed for "${key}": ${describeApiFailure(response.status, await response.text())}`);
+    }
+  };
+}
+
+/**
+ * Extracts schematic-sized images from every page of a PDF. Pages whose images cannot be
+ * decoded are skipped with a warning so one bad page never fails the whole ingest.
+ */
+export async function extractSchematics(
+  pdf: Awaited<ReturnType<typeof getDocumentProxy>>,
+  documentId: string,
+  title: string,
+  chunks: ManualChunk[]
+): Promise<EncodedSchematic[]> {
+  const sectionByPage = new Map<number, string | null>();
+  for (const chunk of chunks) {
+    if (!sectionByPage.has(chunk.pageNumber)) sectionByPage.set(chunk.pageNumber, chunk.sectionTitle);
+  }
+
+  const schematics: EncodedSchematic[] = [];
+  for (let page = 1; page <= pdf.numPages; page++) {
+    try {
+      const raw = await extractImages(pdf, page);
+      schematics.push(...prepareSchematics(documentId, title, page, raw, sectionByPage.get(page)));
+    } catch (err) {
+      console.warn(`Skipping images on page ${page} of "${title}": ${err instanceof Error ? err.message : err}`);
+    }
+  }
+  return schematics;
+}
+
+/** Uploads every encoded schematic PNG to R2. */
+export async function uploadSchematics(schematics: EncodedSchematic[], upload: SchematicUploader): Promise<void> {
+  for (const { image, bytes } of schematics) {
+    await upload(image.r2Key, bytes, image.mimeType);
   }
 }
 
@@ -790,6 +888,13 @@ export async function processAddedModifiedFile(
   const chunks = buildManualChunks(filePath, text);
   console.log(`Parsed "${filePath}" into ${chunks.length} chunks`);
 
+  const documentId = sanitizeFilename(filePath);
+  const title = deriveManualTitle(filePath);
+  const schematics = d1DatabaseId ? await extractSchematics(pdf, documentId, title, chunks) : [];
+  if (schematics.length > 0) {
+    console.log(`Found ${schematics.length} schematic images in "${filePath}"`);
+  }
+
   if (dryRun) {
     console.log(`[dry-run] Skipping embedding/upsert for "${filePath}"`);
     return;
@@ -814,8 +919,14 @@ export async function processAddedModifiedFile(
   }
 
   if (d1DatabaseId) {
-    const doc = buildDocumentRecord(sanitizeFilename(filePath), deriveManualTitle(filePath), filePath, filePath);
-    await executeD1Statements(accountId, apiToken, d1DatabaseId, buildD1UpsertStatements(doc, chunks));
+    await uploadSchematics(schematics, createRestSchematicUploader(accountId, apiToken));
+    const doc = buildDocumentRecord(documentId, title, filePath, filePath);
+    await executeD1Statements(
+      accountId,
+      apiToken,
+      d1DatabaseId,
+      buildD1UpsertStatements(doc, chunks, schematics.map((s) => s.image))
+    );
   }
 
   console.log(`✓ Ingested ${chunks.length} chunks from "${filePath}"`);

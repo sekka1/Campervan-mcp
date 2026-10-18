@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { hybridSearch, hydrateChunks } from "../../src/utils/db";
+import { buildSchematicUrl, hybridSearch, hydrateChunks } from "../../src/utils/db";
 
 function makeIndex(matches: unknown[]) {
   const query = vi.fn().mockResolvedValue({ matches });
@@ -52,5 +52,27 @@ describe("hybridSearch", () => {
       chassis: { $in: ["transit", "universal"] },
       subsystem: { $eq: "12v_dc" },
     });
+  });
+});
+
+describe("schematic URLs", () => {
+  it("joins the CDN base URL and R2 key", () => {
+    expect(buildSchematicUrl("https://cdn.example.com/", "schematics/a b/p1-0.png")).toBe(
+      "https://cdn.example.com/schematics/a%20b/p1-0.png"
+    );
+  });
+
+  it("returns schematic_url only when a CDN base URL is configured", async () => {
+    const vec = new Array(768).fill(0.1) as number[];
+    const row = {
+      id: "a", document_id: "d", document_title: "Doc", category: "oem_bemm", manufacturer: "Ford",
+      applicable_chassis: "transit", page_number: 4, section_title: null, subsystem: "structural",
+      chunk_text: "t", schematic_r2_key: "schematics/d/p4-0.png", schematic_caption: "Cap",
+    };
+    const match = { id: "a", score: 0.9, metadata: { source: "s", text: "m" } };
+    const withCdn = await hybridSearch(makeIndex([match]).index, makeDb([row]).db, vec, { cdnBaseUrl: "https://cdn.test" });
+    expect(withCdn[0]?.schematic_url).toBe("https://cdn.test/schematics/d/p4-0.png");
+    const without = await hybridSearch(makeIndex([match]).index, makeDb([row]).db, vec);
+    expect(without[0]?.schematic_url).toBeUndefined();
   });
 });

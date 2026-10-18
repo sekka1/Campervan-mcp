@@ -9,6 +9,7 @@ export interface Env {
   DB: D1Database;
   VECTOR_INDEX: VectorizeIndex;
   AI?: Ai;
+  CDN_BASE_URL?: string;
 }
 
 export default {
@@ -22,7 +23,7 @@ export default {
     registerElectricalTools(mcp);
     registerPayloadTools(mcp);
     registerSpecTools(mcp, env.DB);
-    registerManualTools(mcp, env.VECTOR_INDEX, env.AI, env.DB);
+    registerManualTools(mcp, env.VECTOR_INDEX, env.AI, env.DB, env.CDN_BASE_URL);
 
     // Use stateless transport for Cloudflare Workers (no persistent sessions)
     const transport = new WebStandardStreamableHTTPServerTransport({
