@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { searchManuals } from "../utils/db.js";
+import { hybridSearch } from "../utils/db.js";
 
 /**
  * Simple embedding generation using Cloudflare AI text embeddings.
@@ -22,7 +22,7 @@ async function generateEmbedding(text: string, ai?: Ai): Promise<number[]> {
   return new Array(768).fill(0) as number[];
 }
 
-export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex, ai?: Ai): void {
+export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex, ai?: Ai, db?: D1Database): void {
   // -------------------------------------------------------------------------
   // Tool: search_van_manuals
   // -------------------------------------------------------------------------
@@ -51,18 +51,24 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
           .describe(
             "Optional filter to restrict search to a specific manual source (e.g., 'ford_transit_body_builder', 'victron_multiplus', 'velit_heater')"
           ),
+        chassis: z
+          .string()
+          .optional()
+          .describe("Optional chassis filter (e.g., 'transit', 'sprinter', 'promaster'); 'universal' documents are always included"),
+        subsystem: z
+          .enum(["12v_dc", "48v_dc", "120v_ac", "plumbing", "heating_cooling", "structural", "chassis_interface"])
+          .optional()
+          .describe("Optional subsystem filter"),
       },
     },
     async (args) => {
       const queryVector = await generateEmbedding(args.query, ai);
 
-      const filter: VectorizeVectorMetadataFilter | undefined = args.source_filter
-        ? { source: { $eq: args.source_filter } }
-        : undefined;
-
-      const results = await searchManuals(vectorIndex, queryVector, {
+      const results = await hybridSearch(vectorIndex, db, queryVector, {
         topK: args.top_k,
-        filter,
+        ...(args.source_filter ? { source: args.source_filter } : {}),
+        ...(args.chassis ? { chassis: args.chassis } : {}),
+        ...(args.subsystem ? { subsystem: args.subsystem } : {}),
       });
 
       const payload =
@@ -73,13 +79,7 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
               query: args.query,
             }
           : {
-              results: results.map((r) => ({
-                score: r.score,
-                source: r.metadata.source,
-                page: r.metadata.page,
-                section: r.metadata.section,
-                text: r.metadata.text,
-              })),
+              results: results.map(({ id, ...rest }) => ({ chunk_id: id, ...rest })),
               count: results.length,
               query: args.query,
             };

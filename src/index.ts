@@ -22,7 +22,7 @@ export default {
     registerElectricalTools(mcp);
     registerPayloadTools(mcp);
     registerSpecTools(mcp, env.DB);
-    registerManualTools(mcp, env.VECTOR_INDEX, env.AI);
+    registerManualTools(mcp, env.VECTOR_INDEX, env.AI, env.DB);
 
     // Use stateless transport for Cloudflare Workers (no persistent sessions)
     const transport = new WebStandardStreamableHTTPServerTransport({
