@@ -4,9 +4,9 @@
   "description": "Campervan Technical & Electrical MCP Server built on Cloudflare Workers",
   "private": true,
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "cf dev",
     "build": "tsc --noEmit",
-    "deploy": "wrangler deploy",
+    "deploy": "cf deploy",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit scripts",
     "test:e2e": "vitest run tests/e2e",
@@ -29,12 +29,13 @@
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
     "@vitest/coverage-v8": "^2.0.0",
+    "cf": "1.0.0-beta.18",
     "eslint": "^9.0.0",
     "tsx": "4.23.1",
     "typescript": "^5.5.0",
     "unpdf": "1.8.0",
     "vitest": "^2.0.0",
-    "wrangler": "^4.115.0"
+    "wrangler": "^4.151.1"
   },
   "engines": {
     "node": ">=22"

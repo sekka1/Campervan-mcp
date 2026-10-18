@@ -51,11 +51,11 @@ jobs:
 
       - name: Create D1 Database (skips if it already exists)
         run: |
-          if npx wrangler d1 info "${{ inputs.d1_database_name }}" >/dev/null 2>&1; then
-            echo "D1 database '${{ inputs.d1_database_name }}' already exists. Skipping creation."
-            npx wrangler d1 info "${{ inputs.d1_database_name }}"
+          DB_ID=$(npx cf d1 list --name "${{ inputs.d1_database_name }}" | jq -r --arg n "${{ inputs.d1_database_name }}" '[.. | objects | select(.name? == $n) | (.uuid // .id)] | first // empty')
+          if [ -n "$DB_ID" ]; then
+            echo "D1 database '${{ inputs.d1_database_name }}' already exists (id: $DB_ID). Skipping creation."
           else
-            npx wrangler d1 create "${{ inputs.d1_database_name }}"
+            npx cf d1 create --name "${{ inputs.d1_database_name }}"
           fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -63,13 +63,13 @@ jobs:
 
       - name: Create Vectorize Index (skips if it already exists)
         run: |
-          if npx wrangler vectorize get "${{ inputs.vectorize_index_name }}" >/dev/null 2>&1; then
+          if npx cf vectorize get "${{ inputs.vectorize_index_name }}" >/dev/null 2>&1; then
             echo "Vectorize index '${{ inputs.vectorize_index_name }}' already exists. Skipping creation."
-            npx wrangler vectorize get "${{ inputs.vectorize_index_name }}"
+            npx cf vectorize get "${{ inputs.vectorize_index_name }}"
           else
-            npx wrangler vectorize create "${{ inputs.vectorize_index_name }}" \
-              --dimensions="${{ inputs.vectorize_dimensions }}" \
-              --metric="${{ inputs.vectorize_metric }}"
+            npx cf vectorize create --name "${{ inputs.vectorize_index_name }}" \
+              --index-config-dimensions="${{ inputs.vectorize_dimensions }}" \
+              --index-config-metric="${{ inputs.vectorize_metric }}"
           fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -78,11 +78,11 @@ jobs:
       - name: Create Vectorize Metadata Indexes (skips if they already exist)
         run: |
           for property in category doc_type; do
-            if npx wrangler vectorize list-metadata-index "${{ inputs.vectorize_index_name }}" 2>/dev/null | grep -q "\"propertyName\": \"$property\""; then
+            if npx cf vectorize metadata-index list --index-name "${{ inputs.vectorize_index_name }}" 2>/dev/null | grep -q "\"propertyName\": \"$property\""; then
               echo "Metadata index for '$property' already exists. Skipping creation."
             else
-              npx wrangler vectorize create-metadata-index "${{ inputs.vectorize_index_name }}" \
-                --property-name="$property" --type=string
+              npx cf vectorize metadata-index create "${{ inputs.vectorize_index_name }}" \
+                --property-name="$property" --index-type=string
             fi
           done
         env:
@@ -91,6 +91,7 @@ jobs:
 
       - name: Next Steps
         run: |
-          echo "If the D1 database was just created above, copy its 'database_id'"
-          echo "into wrangler.toml (d1_databases.database_id), commit, and push to main."
+          echo "If the D1 database was just created above, copy its 'id'"
+          echo "into cloudflare.config.ts (DB binding 'id'), the D1 migration commands in"
+          echo ".github/workflows/, commit, and push to main."
           echo "The 'Deploy to Production' workflow will then apply migrations and deploy."

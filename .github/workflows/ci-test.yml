@@ -38,4 +38,4 @@ jobs:
         run: pnpm test:e2e
 
       - name: Dry Run D1 Migrations
-        run: npx wrangler d1 migrations list DB --local
+        run: npx cf d1 migrations list 2aa73cfb-cf41-4ab3-b614-b0cf1eb7ec0c --dir d1/migrations --local

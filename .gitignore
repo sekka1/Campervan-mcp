@@ -147,3 +147,6 @@ vite.config.ts.timestamp-*
 
 # Local pnpm build-approval overrides (sandbox/CI specific)
 pnpm-workspace.yaml
+
+# cf CLI generated types
+.cloudflare/

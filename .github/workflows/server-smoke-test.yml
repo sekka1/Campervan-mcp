@@ -30,10 +30,10 @@ jobs:
       - name: Run MCP Server Smoke Test
         run: ./scripts/smoke-test-server.sh
 
-      - name: Upload wrangler dev log
+      - name: Upload cf dev log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wrangler-dev-log
-          path: /tmp/wrangler-dev-log.*
+          name: cf-dev-log
+          path: /tmp/cf-dev-log.*
           if-no-files-found: ignore
