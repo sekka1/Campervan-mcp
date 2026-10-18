@@ -181,9 +181,19 @@ metadata, so results can be filtered by document type/category in addition to fu
   "category": "travel",
   "chunk_index": 0,
   "total_chunks": 12,
-  "text": "Raw extracted text chunk..."
+  "text": "Raw extracted text chunk...",
+  "chassis": "universal",
+  "subsystem": "12v_dc"
 }
 ```
+
+Chunks are ~500 words with 100 words of overlap. `chassis` (`transit`, `sprinter`, `promaster`,
+or `universal`) is inferred from the file path and `subsystem` (one of the D1 `subsystem` values,
+default `chassis_interface`) from the chunk text.
+
+When `D1_DATABASE_ID` is set (plus a `CLOUDFLARE_API_TOKEN` with D1 edit permission), both
+ingestion scripts also write the `documents` and `document_chunks` rows via the D1 REST API,
+using the Vectorize vector ID as `document_chunks.id`. Without it, only Vectorize is updated.
 
 `doc_type`/`category` are inferred from the file's folder prefix:
 
@@ -199,6 +209,8 @@ Filtering on `category`/`doc_type` requires Vectorize metadata indexes, which th
 ```bash
 npx cf vectorize metadata-index create van_manuals_index --property-name=category --index-type=string
 npx cf vectorize metadata-index create van_manuals_index --property-name=doc_type --index-type=string
+npx cf vectorize metadata-index create van_manuals_index --property-name=chassis --index-type=string
+npx cf vectorize metadata-index create van_manuals_index --property-name=subsystem --index-type=string
 ```
 
 ### Manual R2 Bucket Sync (Large Manuals)

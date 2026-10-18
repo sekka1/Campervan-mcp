@@ -99,7 +99,7 @@ async function main(): Promise<void> {
     // 3. Parse and chunk the PDF text.
     console.log("[3/6] Parsing and chunking the PDF...");
     const pdf = await getDocumentProxy(new Uint8Array(downloadedBytes), { verbosity: PDF_PARSE_VERBOSITY });
-    const { text } = await extractText(pdf, { mergePages: true });
+    const { text } = await extractText(pdf, { mergePages: false });
     const chunks = buildR2ManualChunks(key, text);
     if (chunks.length === 0) {
       throw new Error("Expected at least one chunk from the fixture PDF, got none.");

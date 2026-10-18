@@ -24,6 +24,8 @@
  *     (standard S3-compatible credentials generated from Cloudflare
  *     Dashboard > R2 > Manage R2 API Tokens; used exclusively to
  *     authenticate the S3 client against the R2 bucket)
+ *   - (optional) D1_DATABASE_ID to also write `documents`/`document_chunks` rows to D1
+ *     (the API token then also needs D1 edit permission)
  *   - R2 bucket created and populated with PDFs (nested subfolders allowed)
  *   - Vectorize index created:
  *       npx cf vectorize create --name=van_manuals_index --index-config-dimensions=768 --index-config-metric=cosine
@@ -43,19 +45,22 @@ import {
 import { extractText, getDocumentProxy } from "unpdf";
 import {
   batchArray,
-  classifyDocPath,
+  buildChunksFromPages,
+  buildD1DeleteStatements,
+  buildD1UpsertStatements,
+  buildDocumentRecord,
+  executeD1Statements,
+  getD1DatabaseId,
   deleteVectorsByIds,
   EMBEDDING_BATCH_SIZE,
   generateChunkId,
   generateEmbeddings,
   MAX_DELETE_CANDIDATE_CHUNKS,
   PDF_PARSE_VERBOSITY,
-  recursiveSplitText,
   upsertVectors,
   VECTORIZE_BATCH_SIZE,
   VECTORIZE_DELETE_BATCH_SIZE,
   type ManualChunk,
-  type ManualChunkMetadata,
   type VectorizeVector,
 } from "./ingest-manuals";
 
@@ -220,28 +225,15 @@ export function deriveManualTitleFromKey(key: string): string {
     .join(" ");
 }
 
-/** Builds the full list of manual chunks (with IDs and metadata) for a PDF's text. */
-export function buildR2ManualChunks(key: string, text: string): ManualChunk[] {
-  const sanitizedName = sanitizeR2Key(key);
-  const manualTitle = deriveManualTitleFromKey(key);
-  const { docType, category } = classifyDocPath(key);
-  const textChunks = recursiveSplitText(text);
-  const totalChunks = textChunks.length;
-
-  return textChunks.map((chunkText, index) => ({
-    id: generateChunkId(sanitizedName, index),
-    text: chunkText,
-    metadata: {
-      filename: key,
-      manual_title: manualTitle,
-      title: manualTitle,
-      doc_type: docType,
-      category,
-      chunk_index: index,
-      total_chunks: totalChunks,
-      text: chunkText,
-    } satisfies ManualChunkMetadata,
-  }));
+/** Builds the full list of manual chunks (with IDs and metadata) for a PDF's text (or per-page texts). */
+export function buildR2ManualChunks(key: string, pages: string | string[]): ManualChunk[] {
+  return buildChunksFromPages({
+    sanitizedName: sanitizeR2Key(key),
+    filename: key,
+    classificationPath: key,
+    title: deriveManualTitleFromKey(key),
+    pages,
+  });
 }
 
 /** Builds the full set of deterministic candidate chunk IDs to delete for a removed R2 object. */
@@ -277,7 +269,8 @@ export async function processDeletedR2Object(
   key: string,
   accountId: string,
   apiToken: string,
-  dryRun: boolean
+  dryRun: boolean,
+  d1DatabaseId?: string
 ): Promise<void> {
   const candidateIds = buildR2DeleteCandidateIds(key);
   console.log(`Deleting up to ${candidateIds.length} candidate vector IDs for "${key}"`);
@@ -290,6 +283,10 @@ export async function processDeletedR2Object(
   for (const batch of batchArray(candidateIds, VECTORIZE_DELETE_BATCH_SIZE)) {
     await deleteVectorsByIds(accountId, apiToken, batch);
   }
+
+  if (d1DatabaseId) {
+    await executeD1Statements(accountId, apiToken, d1DatabaseId, buildD1DeleteStatements(sanitizeR2Key(key)));
+  }
 }
 
 export async function processAddedModifiedR2Object(
@@ -298,7 +295,8 @@ export async function processAddedModifiedR2Object(
   key: string,
   accountId: string,
   apiToken: string,
-  dryRun: boolean
+  dryRun: boolean,
+  d1DatabaseId?: string
 ): Promise<number> {
   const tempPath = await downloadR2ObjectToTemp(r2Client, bucket, key);
 
@@ -306,7 +304,7 @@ export async function processAddedModifiedR2Object(
   try {
     const buffer = readFileSync(tempPath);
     const pdf = await getDocumentProxy(new Uint8Array(buffer), { verbosity: PDF_PARSE_VERBOSITY });
-    const { text } = await extractText(pdf, { mergePages: true });
+    const { text } = await extractText(pdf, { mergePages: false });
     chunks = buildR2ManualChunks(key, text);
   } finally {
     // Clean up the temporary file (and its containing directory) immediately.
@@ -336,6 +334,11 @@ export async function processAddedModifiedR2Object(
     for (const vectorBatch of batchArray(vectors, VECTORIZE_BATCH_SIZE)) {
       await upsertVectors(accountId, apiToken, vectorBatch);
     }
+  }
+
+  if (d1DatabaseId) {
+    const doc = buildDocumentRecord(sanitizeR2Key(key), deriveManualTitleFromKey(key), key, key);
+    await executeD1Statements(accountId, apiToken, d1DatabaseId, buildD1UpsertStatements(doc, chunks));
   }
 
   console.log(`✓ Ingested ${chunks.length} chunks from "${key}"`);
@@ -397,10 +400,15 @@ export async function runSync(options: SyncOptions): Promise<void> {
     return;
   }
 
+  const d1DatabaseId = getD1DatabaseId();
+  if (!d1DatabaseId) {
+    console.warn("D1_DATABASE_ID is not set; skipping D1 document/chunk writes (Vectorize only).");
+  }
+
   const updatedManifest: SyncManifest = { ...manifest };
 
   for (const key of delta.deleted) {
-    await processDeletedR2Object(key, accountId, apiToken, dryRun);
+    await processDeletedR2Object(key, accountId, apiToken, dryRun, d1DatabaseId);
     delete updatedManifest[key];
   }
 
@@ -411,7 +419,8 @@ export async function runSync(options: SyncOptions): Promise<void> {
       obj.key,
       accountId,
       apiToken,
-      dryRun
+      dryRun,
+      d1DatabaseId
     );
     updatedManifest[obj.key] = { etag: obj.etag, chunkCount };
   }
