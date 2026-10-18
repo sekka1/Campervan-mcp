@@ -43,9 +43,12 @@ import { buildR2DeleteCandidateIds, buildR2ManualChunks, createR2Client, R2_BUCK
 const REPO_ROOT = resolve(__dirname, "..");
 const FIXTURE_PDF_PATH = resolve(REPO_ROOT, "tests/fixtures/sample-manual.pdf");
 
-/** Number of attempts (with a short delay between each) when polling Vectorize for eventual consistency. */
-const QUERY_RETRY_ATTEMPTS = 6;
-const QUERY_RETRY_DELAY_MS = 5_000;
+/**
+ * Number of attempts (with a delay between each) when polling Vectorize for eventual consistency.
+ * Vectorize applies upserts asynchronously and indexing lag regularly exceeds 30s, so allow ~2 minutes.
+ */
+const QUERY_RETRY_ATTEMPTS = 12;
+const QUERY_RETRY_DELAY_MS = 10_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
