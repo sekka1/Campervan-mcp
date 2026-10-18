@@ -78,7 +78,7 @@ pnpm dev
 Apply D1 migrations locally:
 
 ```bash
-npx cf d1 migrations apply 2aa73cfb-cf41-4ab3-b614-b0cf1eb7ec0c --dir d1/migrations --local
+npx cf d1 migrations apply 2aa73cfb-cf41-4ab3-b614-b0cf1eb7ec0c --dir d1/migrations --local --persist-to .wrangler/state
 ```
 
 Type-check the project:

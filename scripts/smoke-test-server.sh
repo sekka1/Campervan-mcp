@@ -37,7 +37,7 @@ trap cleanup EXIT
 echo "Applying local D1 migrations..."
 # Database ID must match the `DB` binding in cloudflare.config.ts
 D1_DATABASE_ID="${D1_DATABASE_ID:-2aa73cfb-cf41-4ab3-b614-b0cf1eb7ec0c}"
-npx cf d1 migrations apply "${D1_DATABASE_ID}" --dir d1/migrations --local
+npx cf d1 migrations apply "${D1_DATABASE_ID}" --dir d1/migrations --local --persist-to .wrangler/state
 
 echo "Starting local MCP server on port ${PORT}..."
 npx cf dev --port "${PORT}" > "${LOG_FILE}" 2>&1 &
