@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { registerElectricalTools } from "./tools/electrical.js";
 import { registerPayloadTools } from "./tools/payload.js";
+import { registerChassisTools } from "./tools/chassis.js";
 import { registerSpecTools } from "./tools/specs.js";
 import { registerManualTools } from "./tools/manuals.js";
 
@@ -22,6 +23,7 @@ export default {
     // Register modular tool groups
     registerElectricalTools(mcp);
     registerPayloadTools(mcp);
+    registerChassisTools(mcp);
     registerSpecTools(mcp, env.DB);
     registerManualTools(mcp, env.VECTOR_INDEX, env.AI, env.DB, env.CDN_BASE_URL);
 

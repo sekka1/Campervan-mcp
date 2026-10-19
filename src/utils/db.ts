@@ -241,7 +241,17 @@ export async function hybridSearch(
 ): Promise<HybridSearchResult[]> {
   const filter: VectorizeVectorMetadataFilter = {};
   if (options.source) filter["source"] = { $eq: options.source };
-  if (options.chassis) filter["chassis"] = { $in: [options.chassis, "universal"] };
+  if (options.chassis) {
+    const rawChassis = options.chassis.toLowerCase().trim();
+    const shortChassis = rawChassis.includes("transit")
+      ? "transit"
+      : rawChassis.includes("sprinter")
+        ? "sprinter"
+        : rawChassis.includes("promaster")
+          ? "promaster"
+          : rawChassis;
+    filter["chassis"] = { $in: Array.from(new Set([shortChassis, "universal"])) };
+  }
   if (options.subsystem) filter["subsystem"] = { $eq: options.subsystem };
 
   const matches = await searchManuals(vectorIndex, queryVector, {
