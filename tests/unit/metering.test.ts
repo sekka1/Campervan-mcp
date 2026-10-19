@@ -6,6 +6,7 @@ import {
   extractMeteredToolCalls,
   authenticateAndCheckBalance,
   recordToolUsage,
+  isAuthEnabled,
   isMeteringAllowAll,
   SEARCH_TOOL_COST_MICROCENTS,
   DETERMINISTIC_TOOL_COST_MICROCENTS,
@@ -130,5 +131,23 @@ describe("isMeteringAllowAll", () => {
     expect(isMeteringAllowAll(undefined)).toBe(true);
     expect(isMeteringAllowAll("true")).toBe(true);
     expect(isMeteringAllowAll("false")).toBe(false);
+  });
+});
+
+describe("isAuthEnabled", () => {
+  it("defaults to false unless explicitly set to 'true'", () => {
+    expect(isAuthEnabled(undefined)).toBe(false);
+    expect(isAuthEnabled("false")).toBe(false);
+    expect(isAuthEnabled("true")).toBe(true);
+  });
+});
+
+describe("authenticateAndCheckBalance with enforceBalance=false", () => {
+  it("allows an active account with 0 balance when enforceBalance is false (METERING_ALLOW_ALL=true)", async () => {
+    const first = vi.fn().mockResolvedValue({ id: "acc_zero", balance_microcents: 0, is_active: 1 });
+    const bind = vi.fn().mockReturnValue({ first });
+    const db = { prepare: vi.fn().mockReturnValue({ bind }) } as unknown as D1Database;
+    const res = await authenticateAndCheckBalance(db, "valid-key", 2000, false);
+    expect(res.ok).toBe(true);
   });
 });

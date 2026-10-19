@@ -10,6 +10,7 @@ import {
   extractMeteredToolCalls,
   authenticateAndCheckBalance,
   recordToolUsage,
+  isAuthEnabled,
   isMeteringAllowAll,
   type MeteredToolCall,
 } from "./utils/metering.js";
@@ -20,20 +21,29 @@ export interface Env {
   AI?: Ai;
   CDN_BASE_URL?: string;
   /**
-   * When "true" (current default), all MCP requests bypass API-key auth and microcent billing.
-   * Set to "false" to enforce SHA-256 Bearer API-key authentication and per-tool metering.
+   * Controls whether Bearer API-key authentication is required.
+   * Currently set to "false" (disabled) in cloudflare.config.ts during testing.
+   * Set to "true" to require a valid Bearer API key on all requests.
+   */
+  AUTH_ENABLED?: string;
+  /**
+   * Controls whether microcent metering allows all requests without balance checks/deductions.
+   * Currently set to "true" (allow all) in cloudflare.config.ts.
+   * Set to "false" to enforce balance checks and per-tool microcent deductions.
    */
   METERING_ALLOW_ALL?: string;
 }
 
 export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
-    const allowAll = isMeteringAllowAll(env.METERING_ALLOW_ALL);
+    const authEnabled = isAuthEnabled(env.AUTH_ENABLED);
+    const allowAllMetering = isMeteringAllowAll(env.METERING_ALLOW_ALL);
+    const shouldEnforceMetering = !allowAllMetering;
 
     let meteredCalls: MeteredToolCall[] = [];
     let authenticatedAccountId: string | undefined;
 
-    if (!allowAll) {
+    if (authEnabled || shouldEnforceMetering) {
       if (request.method === "POST") {
         try {
           const cloned = await request.clone().json();
@@ -60,7 +70,8 @@ export default {
       const authResult = await authenticateAndCheckBalance(
         env.DB,
         token,
-        Math.max(1, totalRequiredMicrocents)
+        Math.max(1, totalRequiredMicrocents),
+        shouldEnforceMetering
       );
       if (!authResult.ok) {
         return new Response(
@@ -95,7 +106,7 @@ export default {
     const response = await transport.handleRequest(request);
 
     if (
-      !allowAll &&
+      shouldEnforceMetering &&
       authenticatedAccountId &&
       meteredCalls.length > 0 &&
       response.status === 200

@@ -35,6 +35,22 @@ export const TOOL_COSTS_MICROCENTS: Record<string, number> = {
 };
 
 /**
+ * Returns whether Bearer API-key authentication is enabled (`AUTH_ENABLED === "true"`).
+ * Defaults to `false` (disabled) unless explicitly set to `"true"`.
+ */
+export function isAuthEnabled(authEnabled?: string): boolean {
+  return authEnabled === "true";
+}
+
+/**
+ * Determines whether the metering bypass flag (`METERING_ALLOW_ALL`) is active.
+ * Defaults to `true` (allow all without balance check/deduction) unless explicitly set to `"false"`.
+ */
+export function isMeteringAllowAll(meteringAllowAll?: string): boolean {
+  return meteringAllowAll !== "false";
+}
+
+/**
  * Returns the microcent cost for a given MCP tool name, or null if the tool is not recognized.
  */
 export function getToolCostMicrocents(toolName: string): number | null {
@@ -105,17 +121,19 @@ export type AuthCheckOutcome =
   | { ok: false; status: 401 | 402; error: string };
 
 /**
- * Validates a raw API key against the D1 `accounts` table and verifies the
- * account is active and has sufficient microcent balance for the required cost.
+ * Validates a raw API key against the D1 `accounts` table and (when `enforceBalance` is true)
+ * verifies the account has sufficient microcent balance for the required cost.
  *
  * @param db                   - Cloudflare D1 database binding
  * @param rawApiKey            - Plaintext Bearer API key from the request
- * @param requiredMicrocents   - Minimum balance required (defaults to 1 microcent)
+ * @param requiredMicrocents   - Minimum balance required when metering is enforced (defaults to 1)
+ * @param enforceBalance       - When false (e.g., METERING_ALLOW_ALL="true"), skips the balance check
  */
 export async function authenticateAndCheckBalance(
   db: D1Database,
   rawApiKey: string,
-  requiredMicrocents = 1
+  requiredMicrocents = 1,
+  enforceBalance = true
 ): Promise<AuthCheckOutcome> {
   const apiKeyHash = await hashApiKey(rawApiKey);
   const account = await db
@@ -133,13 +151,15 @@ export async function authenticateAndCheckBalance(
     };
   }
 
-  const minimumBalance = Math.max(1, requiredMicrocents);
-  if (account.balance_microcents < minimumBalance) {
-    return {
-      ok: false,
-      status: 402,
-      error: "Insufficient account balance",
-    };
+  if (enforceBalance) {
+    const minimumBalance = Math.max(1, requiredMicrocents);
+    if (account.balance_microcents < minimumBalance) {
+      return {
+        ok: false,
+        status: 402,
+        error: "Insufficient account balance",
+      };
+    }
   }
 
   return { ok: true, account, apiKeyHash };
@@ -179,12 +199,4 @@ export async function recordToolUsage(
     return false;
   }
   return true;
-}
-
-/**
- * Determines whether the metering bypass flag (`METERING_ALLOW_ALL`) is active.
- * Defaults to `true` unless `METERING_ALLOW_ALL` is explicitly set to `"false"`.
- */
-export function isMeteringAllowAll(meteringAllowAll?: string): boolean {
-  return meteringAllowAll !== "false";
 }

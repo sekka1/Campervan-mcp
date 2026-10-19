@@ -8,6 +8,7 @@ export default defineConfig({
 		env: {
 			ENVIRONMENT: bindings.text("production"),
 			CDN_BASE_URL: bindings.text(""),
+			AUTH_ENABLED: bindings.text("false"),
 			METERING_ALLOW_ALL: bindings.text("true"),
 			DB: bindings.d1({
 				name: "van_specs_db",

@@ -428,6 +428,7 @@ describe("E2E: Bearer API key authentication and microcent metering", () => {
     const env = {
       DB: mockD1Database,
       VECTOR_INDEX: { query: vi.fn() } as unknown as VectorizeIndex,
+      AUTH_ENABLED: "false",
       METERING_ALLOW_ALL: "true",
     };
     const req = new Request("http://localhost/", {
@@ -439,7 +440,38 @@ describe("E2E: Bearer API key authentication and microcent metering", () => {
     expect(res.status).toBe(200);
   });
 
-  it("returns 401 when METERING_ALLOW_ALL is 'false' and Authorization header is missing", async () => {
+  it("verifies API key but skips balance deduction when AUTH_ENABLED='true' and METERING_ALLOW_ALL='true'", async () => {
+    const rawKey = "auth-only-key";
+    const first = vi.fn().mockResolvedValue({ id: "acc_zero", balance_microcents: 0, is_active: 1 });
+    const bind = vi.fn().mockReturnValue({ first });
+    const batch = vi.fn();
+    const db = { prepare: vi.fn().mockReturnValue({ bind }), batch } as unknown as D1Database;
+    const env = {
+      DB: db,
+      VECTOR_INDEX: { query: vi.fn() } as unknown as VectorizeIndex,
+      AUTH_ENABLED: "true",
+      METERING_ALLOW_ALL: "true",
+    };
+    const req = new Request("http://localhost/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        Authorization: `Bearer ${rawKey}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 10,
+        method: "tools/call",
+        params: { name: "chassis_rules", arguments: { chassis: "ford_transit", rule_type: "electrical_tap" } },
+      }),
+    });
+    const res = await worker.fetch(req, env, ctx);
+    expect(res.status).toBe(200);
+    expect(batch).not.toHaveBeenCalled();
+  });
+
+  it("returns 401 when AUTH_ENABLED is 'true' (or METERING_ALLOW_ALL is 'false') and Authorization header is missing", async () => {
     const env = {
       DB: mockD1Database,
       VECTOR_INDEX: { query: vi.fn() } as unknown as VectorizeIndex,
