@@ -34,7 +34,8 @@ const mockD1Database: D1Database = {
 // We test the tool logic directly rather than through HTTP to avoid
 // complex Worker runtime setup in unit/e2e boundary tests.
 
-import { calculateVoltageDrop, calculateVanPayload, validateSolarArray } from "../../src/utils/formulas";
+import { calculateVoltageDrop, calculateDCWireAndFuse, calculateVanPayload, validateSolarArray, evaluateChassisRules } from "../../src/utils/formulas";
+import worker from "../../src/index";
 import { queryComponentSpecs } from "../../src/utils/db";
 
 // ---------------------------------------------------------------------------
@@ -310,5 +311,104 @@ describe("E2E: search_van_manuals tool", () => {
     expect(mockIndex.query).toHaveBeenCalledWith(queryVector, { topK: 5, returnMetadata: "all" });
     expect(results.matches).toHaveLength(1);
     expect(results.matches[0].score).toBe(0.95);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Chassis Rules & ABYC E-11 Wire/Fuse Tool E2E Simulation
+// ---------------------------------------------------------------------------
+
+describe("E2E: chassis_rules and calculate_dc_wire_and_fuse tools", () => {
+  it("evaluates deterministic Ford Transit CCP2 electrical rules and catches over-current tap", () => {
+    const safeTap = evaluateChassisRules("ford_transit", "electrical_tap", { proposed_tap_amps: 50 });
+    expect(safeTap.is_compliant).toBe(true);
+    expect(safeTap.max_alternator_tap_amps).toBe(60);
+    expect(safeTap.oem_connection_point).toContain("CCP2");
+
+    const unsafeTap = evaluateChassisRules("ford_transit", "electrical_tap", { proposed_tap_amps: 90 });
+    expect(unsafeTap.is_compliant).toBe(false);
+    expect(unsafeTap.compliance_warnings[0]).toContain("NON-COMPLIANT");
+
+    const wireCalc = calculateDCWireAndFuse({
+      system_voltage: 12,
+      amperage: 60,
+      one_way_distance_feet: 15,
+      allowable_drop_percent: 3,
+      is_engine_compartment: false,
+    });
+    expect(wireCalc.recommended_awg).toBe("2");
+    expect(wireCalc.recommended_fuse_amps).toBe(75);
+  });
+
+  it("executes full JSON-RPC 2.0 HTTP lifecycle against the Worker fetch entrypoint", async () => {
+    const env = {
+      DB: mockD1Database,
+      VECTOR_INDEX: {
+        query: vi.fn().mockResolvedValue({ matches: [] }),
+      } as unknown as VectorizeIndex,
+    };
+    const ctx = {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+    } as unknown as ExecutionContext;
+
+    const callRpc = async (id: number, method: string, params: Record<string, unknown>) => {
+      const req = new Request("http://localhost/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+      });
+      const res = await worker.fetch(req, env, ctx);
+      expect(res.status).toBe(200);
+      return (await res.json()) as {
+        result?: {
+          tools?: Array<{ name: string }>;
+          content?: Array<{ type: string; text: string }>;
+          isError?: boolean;
+        };
+      };
+    };
+
+    // 1. tools/list includes chassis_rules and calculate_dc_wire_and_fuse
+    const listRes = await callRpc(1, "tools/list", {});
+    const toolNames = (listRes.result?.tools ?? []).map((t) => t.name);
+    expect(toolNames).toContain("chassis_rules");
+    expect(toolNames).toContain("calculate_wire_gauge");
+    expect(toolNames).toContain("calculate_dc_wire_and_fuse");
+
+    // 2. tools/call chassis_rules
+    const chassisRes = await callRpc(2, "tools/call", {
+      name: "chassis_rules",
+      arguments: {
+        chassis: "mercedes_sprinter",
+        rule_type: "roof_load",
+        proposed_roof_load_lbs: 250,
+      },
+    });
+    expect(chassisRes.result?.isError).not.toBe(true);
+    const chassisPayload = JSON.parse(chassisRes.result?.content?.[0]?.text ?? "{}");
+    expect(chassisPayload.canonical_chassis).toBe("mercedes_sprinter");
+    expect(chassisPayload.max_roof_load_lbs).toBe(330);
+    expect(chassisPayload.is_compliant).toBe(true);
+
+    // 3. tools/call calculate_dc_wire_and_fuse
+    const abycRes = await callRpc(3, "tools/call", {
+      name: "calculate_dc_wire_and_fuse",
+      arguments: {
+        system_voltage: 12,
+        amperage: 60,
+        one_way_distance_feet: 15,
+        allowable_drop_percent: 3,
+        is_engine_compartment: false,
+      },
+    });
+    expect(abycRes.result?.isError).not.toBe(true);
+    const abycPayload = JSON.parse(abycRes.result?.content?.[0]?.text ?? "{}");
+    expect(abycPayload.recommended_awg).toBe("2");
+    expect(abycPayload.recommended_fuse_amps).toBe(75);
+    expect(abycPayload.fuse_type).toBe("MIDI / AMI Fuse");
   });
 });

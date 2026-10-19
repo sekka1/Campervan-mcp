@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   calculateVoltageDrop,
+  calculateDCWireAndFuse,
+  selectFuseFormFactor,
   AWG_TABLE,
+  ABYC_AWG_TABLE,
 } from "../../src/utils/formulas";
 
 describe("calculateVoltageDrop", () => {
@@ -253,5 +256,160 @@ describe("validateSolarArray", () => {
       const result = validateSolarArray(standardPanel, 2, 2, mppt);
       expect(result.total_watts).toBe(800);
     });
+  });
+});
+
+describe("ABYC E-11 enhancements in calculateVoltageDrop and selectFuseFormFactor", () => {
+  it("selects correct ABYC fuse form factor across amperage tiers", () => {
+    expect(selectFuseFormFactor(15)).toBe("ATC/ATO Blade");
+    expect(selectFuseFormFactor(30)).toBe("ATC/ATO Blade");
+    expect(selectFuseFormFactor(40)).toBe("MIDI / AMI Fuse");
+    expect(selectFuseFormFactor(100)).toBe("MIDI / AMI Fuse");
+    expect(selectFuseFormFactor(125)).toBe("MRBF (Marine Rated Battery Fuse) or MEGA");
+    expect(selectFuseFormFactor(300)).toBe("MRBF (Marine Rated Battery Fuse) or MEGA");
+    expect(selectFuseFormFactor(350)).toBe("Class T Fuse (Essential for LiFePO4 high AIC ratings)");
+  });
+
+  it("includes round_trip_feet, fuse_type, and abyc_notes in calculateVoltageDrop", () => {
+    const result = calculateVoltageDrop(30, 15, 12, 3);
+    expect(result.round_trip_feet).toBe(30);
+    expect(result.fuse_type).toBe("MIDI / AMI Fuse");
+    expect(result.is_engine_compartment).toBe(false);
+    expect(result.abyc_notes.some((n) => n.includes("30ft total circuit path"))).toBe(true);
+    expect(result.abyc_notes.some((n) => n.includes("7 inches"))).toBe(true);
+  });
+
+  it("upsizes wire when routed through an engine compartment due to ampacity derating", () => {
+    // 50A over a short 2ft run at 12V (3% drop):
+    // requiredCM = 21.4 * 50 * 2 / 0.36 = 5,944 CM.
+    // Outside engine: 8 AWG has 16,510 CM and maxAmps = 50A -> selects 8 AWG.
+    // Inside engine: 8 AWG engineCompartmentMaxAmps = 42A (< 50A), so it must step up to 6 AWG (55A).
+    const outside = calculateVoltageDrop(50, 2, 12, 3, false);
+    const inside = calculateVoltageDrop(50, 2, 12, 3, true);
+    expect(outside.recommended_awg).toBe("8");
+    expect(inside.recommended_awg).toBe("6");
+    expect(inside.is_engine_compartment).toBe(true);
+    expect(inside.notes).toContain("in engine compartment");
+  });
+});
+
+describe("calculateDCWireAndFuse (Spec Section 5 ABYC E-11 105°C)", () => {
+  it("matches the spec's end-to-end trace (60A continuous, 15ft one-way, 12V, 3% drop -> 4 AWG, 75A MIDI fuse)", () => {
+    const result = calculateDCWireAndFuse({
+      system_voltage: 12,
+      amperage: 60,
+      one_way_distance_feet: 15,
+      allowable_drop_percent: 3,
+      is_engine_compartment: false,
+    });
+    // round_trip = 30ft, requiredCM = (10.75 * 60 * 30) / 0.36 = 53,750 CM -> 2 AWG (66,360 CM)
+    expect(result.recommended_awg).toBe("2");
+    expect(result.round_trip_feet).toBe(30);
+    expect(result.recommended_fuse_amps).toBe(75);
+    expect(result.fuse_type).toBe("MIDI / AMI Fuse");
+    expect(result.exact_voltage_drop_percent).toBeLessThanOrEqual(3);
+  });
+
+  it("enforces engine-compartment ampacity derating on high-current short runs", () => {
+    // 35A on a 2ft run at 12V (10% drop):
+    // requiredCM = (10.75 * 35 * 4) / 1.2 = 1,254 CM.
+    // 14 AWG has 35A outside engine, but only 30A inside engine -> inside engine must step up to 12 AWG (38A).
+    const outside = calculateDCWireAndFuse({
+      system_voltage: 12,
+      amperage: 35,
+      one_way_distance_feet: 2,
+      allowable_drop_percent: 10,
+      is_engine_compartment: false,
+    });
+    const inside = calculateDCWireAndFuse({
+      system_voltage: 12,
+      amperage: 35,
+      one_way_distance_feet: 2,
+      allowable_drop_percent: 10,
+      is_engine_compartment: true,
+    });
+    expect(outside.recommended_awg).toBe("14");
+    expect(inside.recommended_awg).toBe("12");
+  });
+
+  it("caps recommended_fuse_amps at wire_ampacity when 125% of load exceeds wire rating", () => {
+    // 24A on 2ft run at 12V (10% drop) outside engine:
+    // selects 16 AWG (ampacity 25A). 24 * 1.25 = 30A > 25A -> capped at 25A.
+    const result = calculateDCWireAndFuse({
+      system_voltage: 12,
+      amperage: 24,
+      one_way_distance_feet: 2,
+      allowable_drop_percent: 10,
+      is_engine_compartment: false,
+    });
+    expect(result.recommended_awg).toBe("16");
+    expect(result.wire_ampacity_amps).toBe(25);
+    expect(result.recommended_fuse_amps).toBe(25);
+    expect(result.fuse_type).toBe("ATC/ATO Blade");
+  });
+
+  it("recommends MRBF/MEGA and Class T fuses for heavy inverter loads", () => {
+    const mrbf = calculateDCWireAndFuse({
+      system_voltage: 12,
+      amperage: 150,
+      one_way_distance_feet: 5,
+      allowable_drop_percent: 3,
+      is_engine_compartment: false,
+    });
+    expect(mrbf.recommended_fuse_amps).toBe(188);
+    expect(mrbf.fuse_type).toBe("MRBF (Marine Rated Battery Fuse) or MEGA");
+
+    const classT = calculateDCWireAndFuse({
+      system_voltage: 48,
+      amperage: 300,
+      one_way_distance_feet: 5,
+      allowable_drop_percent: 3,
+      is_engine_compartment: false,
+    });
+    expect(classT.recommended_fuse_amps).toBe(330);
+    expect(classT.fuse_type).toBe("Class T Fuse (Essential for LiFePO4 high AIC ratings)");
+  });
+
+  it("throws when circuit requirements exceed 4/0 AWG limits", () => {
+    expect(() =>
+      calculateDCWireAndFuse({
+        system_voltage: 12,
+        amperage: 400,
+        one_way_distance_feet: 40,
+        allowable_drop_percent: 3,
+        is_engine_compartment: false,
+      })
+    ).toThrow("Exceeds 4/0 AWG limits. Consider upgrading system voltage to 24V or 48V.");
+  });
+
+  it("validates positive amperage and distance", () => {
+    expect(() =>
+      calculateDCWireAndFuse({
+        system_voltage: 12,
+        amperage: 0,
+        one_way_distance_feet: 10,
+        allowable_drop_percent: 3,
+        is_engine_compartment: false,
+      })
+    ).toThrow("amperage must be positive");
+
+    expect(() =>
+      calculateDCWireAndFuse({
+        system_voltage: 12,
+        amperage: 20,
+        one_way_distance_feet: 0,
+        allowable_drop_percent: 3,
+        is_engine_compartment: false,
+      })
+    ).toThrow("one_way_distance_feet must be positive");
+  });
+
+  it("maintains ascending circular_mils and ampacity order in ABYC_AWG_TABLE", () => {
+    for (let i = 0; i < ABYC_AWG_TABLE.length - 1; i++) {
+      expect(ABYC_AWG_TABLE[i]!.circular_mils).toBeLessThan(ABYC_AWG_TABLE[i + 1]!.circular_mils);
+      expect(ABYC_AWG_TABLE[i]!.ampacity_outside_engine_105c).toBeLessThan(
+        ABYC_AWG_TABLE[i + 1]!.ampacity_outside_engine_105c
+      );
+    }
   });
 });

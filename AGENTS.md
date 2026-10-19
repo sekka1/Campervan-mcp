@@ -25,6 +25,10 @@ Welcome AI Agent. This repository contains a production-grade Model Context Prot
    - If lint or tests fail, fix the underlying issues first, then re-run lint and tests to confirm they pass before committing.
    - Never commit code with known failing lint or test results.
 
+6. **Quota & Turn Budgeting**:
+   - Break work into small, incremental steps per turn (target ≤ 5 tool calls per turn) to stay well below API/turn quota limits.
+   - Return checkpoints to the user between major steps (audit, implementation, verification/PR).
+
 ## Command Reference
 - **Run Lint:** `pnpm lint`
 - **Run Unit Tests:** `pnpm test:unit`

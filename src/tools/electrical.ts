@@ -1,6 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { calculateVoltageDrop, validateSolarArray } from "../utils/formulas.js";
+import {
+  calculateVoltageDrop,
+  calculateDCWireAndFuse,
+  validateSolarArray,
+} from "../utils/formulas.js";
 
 export function registerElectricalTools(mcp: McpServer): void {
   // -------------------------------------------------------------------------
@@ -10,7 +14,7 @@ export function registerElectricalTools(mcp: McpServer): void {
     "calculate_wire_gauge",
     {
       description:
-        "Calculates recommended AWG wire size, conductor resistance, voltage drop percentage, and fuse sizing for a DC circuit based on electrical load, wire run distance, and system voltage.",
+        "Calculates recommended AWG wire size, conductor resistance, voltage drop percentage, fuse sizing, and ABYC fuse form factor for a DC circuit based on electrical load, one-way wire run distance, system voltage, and engine compartment routing.",
       inputSchema: {
         current_amps: z
           .number()
@@ -32,6 +36,12 @@ export function registerElectricalTools(mcp: McpServer): void {
           .describe(
             "Maximum allowable voltage drop percentage. Use 3% for critical loads (inverters, chargers), 10% for non-critical (lights, fans)"
           ),
+        is_engine_compartment: z
+          .boolean()
+          .default(false)
+          .describe(
+            "True if the wire is routed through an engine compartment (applies ABYC E-11 high-temperature ampacity derating)"
+          ),
       },
     },
     async (args) => {
@@ -39,8 +49,55 @@ export function registerElectricalTools(mcp: McpServer): void {
         args.current_amps,
         args.length_feet,
         Number(args.voltage),
-        args.allowable_drop_pct
+        args.allowable_drop_pct,
+        args.is_engine_compartment
       );
+
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+      };
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool: calculate_dc_wire_and_fuse (Strict ABYC E-11 105°C Table)
+  // -------------------------------------------------------------------------
+  mcp.registerTool(
+    "calculate_dc_wire_and_fuse",
+    {
+      description:
+        "Performs deterministic ABYC E-11 compliant DC cable gauge (AWG), voltage drop, and overcurrent fuse sizing using 105°C marine/RV stranded tinned copper ampacity tables.",
+      inputSchema: {
+        system_voltage: z
+          .union([z.literal(12), z.literal(24), z.literal(48)])
+          .describe("DC system voltage: 12, 24, or 48"),
+        amperage: z
+          .number()
+          .positive()
+          .describe("Continuous circuit current in Amperes"),
+        one_way_distance_feet: z
+          .number()
+          .positive()
+          .describe("One-way cable length in feet (doubled internally for round-trip loop)"),
+        allowable_drop_percent: z
+          .union([z.literal(3), z.literal(10)])
+          .default(3)
+          .describe("Allowable voltage drop percentage: 3 for critical circuits, 10 for non-critical"),
+        is_engine_compartment: z
+          .boolean()
+          .default(false)
+          .describe("True if routed through an engine compartment (applies 105°C engine room ampacity limits)"),
+      },
+    },
+    async (args) => {
+      const result = calculateDCWireAndFuse({
+        system_voltage: args.system_voltage,
+        amperage: args.amperage,
+        one_way_distance_feet: args.one_way_distance_feet,
+        allowable_drop_percent: args.allowable_drop_percent,
+        is_engine_compartment: args.is_engine_compartment,
+      });
+
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
       };
@@ -124,6 +181,7 @@ export function registerElectricalTools(mcp: McpServer): void {
         },
         args.cold_temp_c
       );
+
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
       };

@@ -53,6 +53,14 @@ describe("hybridSearch", () => {
       subsystem: { $eq: "12v_dc" },
     });
   });
+
+  it("normalizes manufacturer-prefixed chassis names (e.g., ford_transit -> transit)", async () => {
+    const { index, query } = makeIndex([]);
+    await hybridSearch(index, undefined, vec, { chassis: "ford_transit" });
+    expect(query.mock.calls[0]?.[1].filter).toEqual({
+      chassis: { $in: ["transit", "universal"] },
+    });
+  });
 });
 
 describe("schematic URLs", () => {

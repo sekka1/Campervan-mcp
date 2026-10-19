@@ -81,6 +81,8 @@ tools_response=$(json_rpc 2 tools/list '{}')
 assert_field "tools/list returns calculate_wire_gauge" "${tools_response}" '.result.tools[] | select(.name == "calculate_wire_gauge")'
 assert_field "tools/list returns calculate_van_payload" "${tools_response}" '.result.tools[] | select(.name == "calculate_van_payload")'
 assert_field "tools/list returns lookup_component_specs" "${tools_response}" '.result.tools[] | select(.name == "lookup_component_specs")'
+assert_field "tools/list returns chassis_rules" "${tools_response}" '.result.tools[] | select(.name == "chassis_rules")'
+assert_field "tools/list returns calculate_dc_wire_and_fuse" "${tools_response}" '.result.tools[] | select(.name == "calculate_dc_wire_and_fuse")'
 
 echo
 echo "--- tools/call calculate_wire_gauge ---"
@@ -102,6 +104,18 @@ echo
 echo "--- tools/call lookup_component_specs ---"
 specs_response=$(json_rpc 6 tools/call '{"name":"lookup_component_specs","arguments":{"category":"inverter_charger"}}')
 assert_field "lookup_component_specs succeeds" "${specs_response}" '.result.isError != true'
+
+echo
+echo "--- tools/call chassis_rules ---"
+chassis_response=$(json_rpc 7 tools/call '{"name":"chassis_rules","arguments":{"chassis":"ford_transit","rule_type":"electrical_tap","proposed_tap_amps":50}}')
+assert_field "chassis_rules succeeds" "${chassis_response}" '.result.isError != true'
+assert_field "chassis_rules returns canonical_chassis" "${chassis_response}" '(.result.content[0].text | fromjson).canonical_chassis == "ford_transit"'
+
+echo
+echo "--- tools/call calculate_dc_wire_and_fuse ---"
+abyc_response=$(json_rpc 8 tools/call '{"name":"calculate_dc_wire_and_fuse","arguments":{"system_voltage":12,"amperage":60,"one_way_distance_feet":15,"allowable_drop_percent":3,"is_engine_compartment":false}}')
+assert_field "calculate_dc_wire_and_fuse succeeds" "${abyc_response}" '.result.isError != true'
+assert_field "calculate_dc_wire_and_fuse returns fuse_type" "${abyc_response}" '(.result.content[0].text | fromjson).fuse_type == "MIDI / AMI Fuse"'
 
 echo
 echo "All MCP endpoint tests passed against ${BASE_URL}."
