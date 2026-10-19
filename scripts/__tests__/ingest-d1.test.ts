@@ -116,10 +116,11 @@ describe("D1 statements", () => {
 
   it("clears old chunks, upserts the document, then inserts chunks keyed by vector ID", () => {
     const statements = buildD1UpsertStatements(doc, chunks);
-    expect(statements).toHaveLength(2 + chunks.length);
+    expect(statements).toHaveLength(3 + chunks.length);
     expect(statements[0].sql).toContain("DELETE FROM document_chunks");
-    expect(statements[1].sql).toContain("INSERT INTO documents");
-    expect(statements[2].params).toEqual([
+    expect(statements[1].sql).toContain("DELETE FROM schematic_images");
+    expect(statements[2].sql).toContain("INSERT INTO documents");
+    expect(statements[3].params).toEqual([
       chunks[0].id,
       "transit_bemm_pdf",
       1,
@@ -128,11 +129,36 @@ describe("D1 statements", () => {
       chunks[0].text,
       7,
       Math.ceil(7 * 1.3),
+      null,
     ]);
   });
 
+  it("inserts schematic images before chunks and links chunks on the same page", () => {
+    const image = {
+      id: "transit_bemm_pdf_p1_img0",
+      documentId: "transit_bemm_pdf",
+      pageNumber: 1,
+      caption: "Bemm - page 1",
+      r2Key: "schematics/transit_bemm_pdf/p1-0.png",
+      mimeType: "image/png",
+      width: 200,
+      height: 150,
+    };
+    const statements = buildD1UpsertStatements(doc, chunks, [image]);
+    expect(statements[3].sql).toContain("INSERT INTO schematic_images");
+    expect(statements[3].params).toEqual([image.id, "transit_bemm_pdf", 1, "Bemm - page 1", image.r2Key, "image/png", 200, 150]);
+    expect(statements[4].sql).toContain("INSERT INTO document_chunks");
+    expect(statements[4].params.at(-1)).toBe(image.id);
+  });
+
+  it("stores the detected section title on chunks", () => {
+    const [chunk] = buildManualChunks("transit/bemm.pdf", "3.2 Roof Loads\nRoof load limits apply.");
+    expect(chunk.sectionTitle).toBe("3.2 Roof Loads");
+    expect(buildD1UpsertStatements(doc, [chunk])[3].params[3]).toBe("3.2 Roof Loads");
+  });
+
   it("builds delete statements for a document", () => {
-    expect(buildD1DeleteStatements("x").map((s) => s.params)).toEqual([["x"], ["x"]]);
+    expect(buildD1DeleteStatements("x").map((s) => s.params)).toEqual([["x"], ["x"], ["x"]]);
   });
 });
 

@@ -22,7 +22,7 @@ async function generateEmbedding(text: string, ai?: Ai): Promise<number[]> {
   return new Array(768).fill(0) as number[];
 }
 
-export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex, ai?: Ai, db?: D1Database): void {
+export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex, ai?: Ai, db?: D1Database, cdnBaseUrl?: string): void {
   // -------------------------------------------------------------------------
   // Tool: search_van_manuals
   // -------------------------------------------------------------------------
@@ -66,6 +66,7 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
 
       const results = await hybridSearch(vectorIndex, db, queryVector, {
         topK: args.top_k,
+        ...(cdnBaseUrl ? { cdnBaseUrl } : {}),
         ...(args.source_filter ? { source: args.source_filter } : {}),
         ...(args.chassis ? { chassis: args.chassis } : {}),
         ...(args.subsystem ? { subsystem: args.subsystem } : {}),

@@ -50,6 +50,7 @@ import {
   buildD1UpsertStatements,
   buildDocumentRecord,
   executeD1Statements,
+  extractSchematics,
   getD1DatabaseId,
   deleteVectorsByIds,
   EMBEDDING_BATCH_SIZE,
@@ -57,12 +58,14 @@ import {
   generateEmbeddings,
   MAX_DELETE_CANDIDATE_CHUNKS,
   PDF_PARSE_VERBOSITY,
+  uploadSchematics,
   upsertVectors,
   VECTORIZE_BATCH_SIZE,
   VECTORIZE_DELETE_BATCH_SIZE,
   type ManualChunk,
   type VectorizeVector,
 } from "./ingest-manuals";
+import type { EncodedSchematic } from "./schematics";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -301,11 +304,15 @@ export async function processAddedModifiedR2Object(
   const tempPath = await downloadR2ObjectToTemp(r2Client, bucket, key);
 
   let chunks: ManualChunk[];
+  let schematics: EncodedSchematic[] = [];
   try {
     const buffer = readFileSync(tempPath);
     const pdf = await getDocumentProxy(new Uint8Array(buffer), { verbosity: PDF_PARSE_VERBOSITY });
     const { text } = await extractText(pdf, { mergePages: false });
     chunks = buildR2ManualChunks(key, text);
+    if (d1DatabaseId) {
+      schematics = await extractSchematics(pdf, sanitizeR2Key(key), deriveManualTitleFromKey(key), chunks);
+    }
   } finally {
     // Clean up the temporary file (and its containing directory) immediately.
     rmSync(join(tempPath, ".."), { recursive: true, force: true });
@@ -337,8 +344,18 @@ export async function processAddedModifiedR2Object(
   }
 
   if (d1DatabaseId) {
+    await uploadSchematics(schematics, async (schematicKey, bytes, contentType) => {
+      await r2Client.send(
+        new PutObjectCommand({ Bucket: bucket, Key: schematicKey, Body: bytes, ContentType: contentType })
+      );
+    });
     const doc = buildDocumentRecord(sanitizeR2Key(key), deriveManualTitleFromKey(key), key, key);
-    await executeD1Statements(accountId, apiToken, d1DatabaseId, buildD1UpsertStatements(doc, chunks));
+    await executeD1Statements(
+      accountId,
+      apiToken,
+      d1DatabaseId,
+      buildD1UpsertStatements(doc, chunks, schematics.map((s) => s.image))
+    );
   }
 
   console.log(`✓ Ingested ${chunks.length} chunks from "${key}"`);
