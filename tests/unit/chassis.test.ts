@@ -112,11 +112,12 @@ describe("evaluateChassisRules", () => {
     expect(result.is_compliant).toBe(true);
   });
 
-  it("returns specific roof load rules for sprinter (330 lbs limit)", () => {
+  it("returns specific roof load rules for sprinter (220 lbs baseline without rails, 330 lbs with rails)", () => {
     const result = evaluateChassisRules("mercedes_sprinter", "roof_load");
     expect(result.canonical_chassis).toBe("mercedes_sprinter");
-    expect(result.max_roof_load_lbs).toBe(330);
+    expect(result.max_roof_load_lbs).toBe(220);
     expect(result.guidance).toContain("330 lbs");
+    expect(result.guidance).toContain("220 lbs");
   });
 
   it("returns electrical CCP1/CCP2 rules for transit (60A single stud limit)", () => {
@@ -128,10 +129,10 @@ describe("evaluateChassisRules", () => {
     expect(result.oem_connection_point).toContain("CCP2");
   });
 
-  it("returns EK1 electrical rules for sprinter", () => {
+  it("returns EK1 electrical rules for sprinter (25A conservative EK1 Terminal 30 baseline)", () => {
     const result = evaluateChassisRules("sprinter", "electrical_tap");
     expect(result.canonical_chassis).toBe("mercedes_sprinter");
-    expect(result.max_alternator_tap_amps).toBe(80);
+    expect(result.max_alternator_tap_amps).toBe(25);
     expect(result.guidance).toContain("EK1");
   });
 
@@ -186,11 +187,25 @@ describe("evaluateChassisRules", () => {
     expect(compliant.compliance_warnings).toHaveLength(0);
   });
 
-  it("returns general guidance for unknown rule categories", () => {
+  it("returns general guidance for unknown rule categories and still validates proposals", () => {
     const result = evaluateChassisRules("universal", "random");
     expect(result.rule_category).toBe("general");
     expect(result.guidance).toContain("Refer to the OEM Body and Equipment Mounting Manual");
     expect(result.max_roof_load_lbs).toBe(200);
     expect(result.max_alternator_tap_amps).toBe(50);
+
+    // Proposals passed with unrelated or general rule_type must still be checked
+    const crossCategoryRoof = evaluateChassisRules("ram_promaster", "floor_mounting", {
+      proposed_roof_load_lbs: 220,
+    });
+    expect(crossCategoryRoof.is_compliant).toBe(false);
+    expect(crossCategoryRoof.compliance_warnings[0]).toContain("NON-COMPLIANT");
+
+    const generalNonCompliant = evaluateChassisRules("ram_promaster", "random", {
+      proposed_roof_load_lbs: 220,
+      proposed_tap_amps: 80,
+    });
+    expect(generalNonCompliant.is_compliant).toBe(false);
+    expect(generalNonCompliant.compliance_warnings).toHaveLength(2);
   });
 });

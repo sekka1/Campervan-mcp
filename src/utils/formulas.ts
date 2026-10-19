@@ -162,8 +162,18 @@ export function calculateVoltageDrop(
       return spec.circularMils >= requiredCM && effectiveAmpacity >= currentAmps;
     });
 
-  // Fall back to largest gauge in table if no candidate found
-  const selected = candidate ?? AWG_TABLE[0]!;
+  const largestSpec = AWG_TABLE[0]!;
+  const maxAvailableAmpacity = isEngineCompartment
+    ? largestSpec.engineCompartmentMaxAmps
+    : largestSpec.maxAmps;
+  if (currentAmps > maxAvailableAmpacity) {
+    throw new Error(
+      `Current ${currentAmps}A exceeds maximum 4/0 AWG ampacity limit (${maxAvailableAmpacity}A${isEngineCompartment ? " in engine compartment" : ""}). Consider parallel conductors or upgrading system voltage to 24V/48V.`
+    );
+  }
+
+  // Fall back to largest gauge in table only when ampacity is safe but long wire run exceeds target voltage drop
+  const selected = candidate ?? largestSpec;
   const effectiveAmpacity = isEngineCompartment
     ? selected.engineCompartmentMaxAmps
     : selected.maxAmps;
@@ -241,14 +251,27 @@ export function calculateDCWireAndFuse(params: WireCalculationParams): WireCalcu
   // 1. Calculate Required Circular Mils
   const requiredCircularMils = (K * params.amperage * roundTripFeet) / allowableVDrop;
 
-  // 2. Filter AWG Table based on BOTH Circular Mils AND Ampacity Safety Limits
+  // Helper: pick a standard commercial fuse that is > amperage (preferably >= 125% load) and <= wireAmpacity
+  const pickStandardFuse = (maxWireAmpacity: number): number | undefined => {
+    const target125 = roundUpToStandardFuseSize(params.amperage * 1.25);
+    if (target125 <= maxWireAmpacity) {
+      return target125;
+    }
+    const validFuses = STANDARD_FUSE_SIZES.filter(
+      (f) => f >= params.amperage && f <= maxWireAmpacity
+    );
+    return validFuses.length > 0 ? validFuses[validFuses.length - 1] : undefined;
+  };
+
+  // 2. Filter AWG Table based on Circular Mils, Ampacity, AND availability of a valid standard fuse <= wire ampacity
   const matchedSpec = ABYC_AWG_TABLE.find((spec) => {
     const meetsDrop = spec.circular_mils >= requiredCircularMils;
     const maxAmpacity = params.is_engine_compartment
       ? spec.ampacity_inside_engine_105c
       : spec.ampacity_outside_engine_105c;
     const meetsAmpacity = maxAmpacity >= params.amperage;
-    return meetsDrop && meetsAmpacity;
+    const hasValidStandardFuse = pickStandardFuse(maxAmpacity) !== undefined;
+    return meetsDrop && meetsAmpacity && hasValidStandardFuse;
   });
 
   if (!matchedSpec) {
@@ -260,15 +283,12 @@ export function calculateDCWireAndFuse(params: WireCalculationParams): WireCalcu
   const actualVDrop = params.amperage * loopResistance;
   const actualPercentDrop = (actualVDrop / params.system_voltage) * 100;
 
-  // 4. Overcurrent Protection Sizing (ABYC: Fuse within 7" of battery positive, capped at wire rating)
+  // 4. Overcurrent Protection Sizing (ABYC: standard fuse rating >= load and <= wire ampacity)
   const wireAmpacity = params.is_engine_compartment
     ? matchedSpec.ampacity_inside_engine_105c
     : matchedSpec.ampacity_outside_engine_105c;
 
-  let recommendedFuse = Math.round(params.amperage * 1.25);
-  if (recommendedFuse > wireAmpacity) {
-    recommendedFuse = wireAmpacity;
-  }
+  const recommendedFuse = pickStandardFuse(wireAmpacity)!;
 
   const fuseType = selectFuseFormFactor(recommendedFuse);
 
@@ -766,9 +786,9 @@ const CHASSIS_RULES_DB: Record<CanonicalChassis, Record<Exclude<ChassisRuleCateg
   mercedes_sprinter: {
     electrical_tap: {
       guidance:
-        "Use the OEM EK1 terminal strip under the driver's seat (D+ max 10A, Terminal 30 Bat+ max 25A, Terminal 15 Ignition+ max 15A) or the upfitter auxiliary battery stud for higher current DC-DC charging (up to 40A–80A depending on alternator option M40/M60).",
+        "Use the OEM EK1 terminal strip under the driver's seat (D+ max 10A, Terminal 30 Bat+ max 25A, Terminal 15 Ignition+ max 15A). Higher DC-DC charging currents (up to 40A on standard alternator or 80A with option M60) must connect to the F150/4 upfitter fuse block rather than EK1.",
       maxRoofLoadLbs: null,
-      maxAlternatorTapAmps: 80,
+      maxAlternatorTapAmps: 25,
       oemConnectionPoint: "EK1 Body Builder Terminal Strip under driver's seat & F150/4 upfitter fuse block",
       fastenerSpec: "M6 / M8 terminal studs torqued to Mercedes-Benz BBMD specification (10–14 Nm)",
       allowedPractices: [
@@ -786,8 +806,8 @@ const CHASSIS_RULES_DB: Record<CanonicalChassis, Record<Exclude<ChassisRuleCateg
     },
     roof_load: {
       guidance:
-        "Maximum dynamic roof load is 330 lbs (150 kg) on High Roof models with OEM C-channel roof rails, or 220 lbs (100 kg) without factory rails. Super-High fiberglass roofs are limited to 110 lbs (50 kg).",
-      maxRoofLoadLbs: 330,
+        "Baseline dynamic roof load is 110 lbs (50 kg) on Super-High fiberglass roofs, 220 lbs (100 kg) on High Roof without factory rails, and up to 330 lbs (150 kg) on High Roof models equipped with OEM C-channel roof rails.",
+      maxRoofLoadLbs: 220,
       maxAlternatorTapAmps: null,
       oemConnectionPoint: "OEM C-channel roof rails along roof perimeter",
       fastenerSpec: "M8 T-slot stainless steel channel bolts torqued to 18 Nm",
@@ -1140,6 +1160,32 @@ export function evaluateChassisRules(
   const { canonical, alias } = normalizeChassisId(chassis);
   const category = normalizeRuleCategory(ruleType);
 
+  const chassisRoofLimit = CHASSIS_RULES_DB[canonical].roof_load.maxRoofLoadLbs;
+  const chassisTapLimit = CHASSIS_RULES_DB[canonical].electrical_tap.maxAlternatorTapAmps;
+  const complianceWarnings: string[] = [];
+
+  // Always evaluate any supplied proposals against the chassis's deterministic limits,
+  // regardless of which guidance category was requested.
+  if (
+    options.proposed_roof_load_lbs !== undefined &&
+    chassisRoofLimit !== null &&
+    options.proposed_roof_load_lbs > chassisRoofLimit
+  ) {
+    complianceWarnings.push(
+      `NON-COMPLIANT: Proposed roof load of ${options.proposed_roof_load_lbs} lbs exceeds the ${canonical} baseline OEM dynamic roof limit of ${chassisRoofLimit} lbs by ${options.proposed_roof_load_lbs - chassisRoofLimit} lbs.`
+    );
+  }
+
+  if (
+    options.proposed_tap_amps !== undefined &&
+    chassisTapLimit !== null &&
+    options.proposed_tap_amps > chassisTapLimit
+  ) {
+    complianceWarnings.push(
+      `NON-COMPLIANT: Proposed continuous tap of ${options.proposed_tap_amps}A exceeds the ${canonical} baseline OEM connection point rating of ${chassisTapLimit}A.`
+    );
+  }
+
   if (category === "general") {
     return {
       chassis,
@@ -1149,8 +1195,8 @@ export function evaluateChassisRules(
       rule_category: "general",
       guidance:
         "Refer to the OEM Body and Equipment Mounting Manual (BEMM) for specific guidance. Supported deterministic categories: electrical_tap, roof_load, structural_cutting, floor_mounting, heating_ventilation.",
-      max_roof_load_lbs: CHASSIS_RULES_DB[canonical].roof_load.maxRoofLoadLbs,
-      max_alternator_tap_amps: CHASSIS_RULES_DB[canonical].electrical_tap.maxAlternatorTapAmps,
+      max_roof_load_lbs: chassisRoofLimit,
+      max_alternator_tap_amps: chassisTapLimit,
       oem_connection_point: CHASSIS_RULES_DB[canonical].electrical_tap.oemConnectionPoint,
       fastener_spec: null,
       allowed_practices: [
@@ -1160,8 +1206,8 @@ export function evaluateChassisRules(
       prohibited_practices: [
         ...CHASSIS_RULES_DB[canonical].structural_cutting.prohibitedPractices.slice(0, 1),
       ],
-      is_compliant: true,
-      compliance_warnings: [],
+      is_compliant: complianceWarnings.length === 0,
+      compliance_warnings: complianceWarnings,
       notes: [
         "Specify rule_type as 'electrical_tap', 'roof_load', 'structural_cutting', 'floor_mounting', or 'heating_ventilation' for targeted OEM specifications.",
       ],
@@ -1169,27 +1215,6 @@ export function evaluateChassisRules(
   }
 
   const spec = CHASSIS_RULES_DB[canonical][category];
-  const complianceWarnings: string[] = [];
-
-  if (
-    options.proposed_roof_load_lbs !== undefined &&
-    spec.maxRoofLoadLbs !== null &&
-    options.proposed_roof_load_lbs > spec.maxRoofLoadLbs
-  ) {
-    complianceWarnings.push(
-      `NON-COMPLIANT: Proposed roof load of ${options.proposed_roof_load_lbs} lbs exceeds the ${canonical} OEM dynamic roof limit of ${spec.maxRoofLoadLbs} lbs by ${options.proposed_roof_load_lbs - spec.maxRoofLoadLbs} lbs.`
-    );
-  }
-
-  if (
-    options.proposed_tap_amps !== undefined &&
-    spec.maxAlternatorTapAmps !== null &&
-    options.proposed_tap_amps > spec.maxAlternatorTapAmps
-  ) {
-    complianceWarnings.push(
-      `NON-COMPLIANT: Proposed continuous tap of ${options.proposed_tap_amps}A exceeds the ${canonical} OEM connection point rating of ${spec.maxAlternatorTapAmps}A.`
-    );
-  }
 
   return {
     chassis,

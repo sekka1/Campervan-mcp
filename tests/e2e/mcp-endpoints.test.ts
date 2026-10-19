@@ -337,7 +337,7 @@ describe("E2E: chassis_rules and calculate_dc_wire_and_fuse tools", () => {
       is_engine_compartment: false,
     });
     expect(wireCalc.recommended_awg).toBe("2");
-    expect(wireCalc.recommended_fuse_amps).toBe(75);
+    expect(wireCalc.recommended_fuse_amps).toBe(80);
   });
 
   it("executes full JSON-RPC 2.0 HTTP lifecycle against the Worker fetch entrypoint", async () => {
@@ -385,13 +385,13 @@ describe("E2E: chassis_rules and calculate_dc_wire_and_fuse tools", () => {
       arguments: {
         chassis: "mercedes_sprinter",
         rule_type: "roof_load",
-        proposed_roof_load_lbs: 250,
+        proposed_roof_load_lbs: 200,
       },
     });
     expect(chassisRes.result?.isError).not.toBe(true);
     const chassisPayload = JSON.parse(chassisRes.result?.content?.[0]?.text ?? "{}");
     expect(chassisPayload.canonical_chassis).toBe("mercedes_sprinter");
-    expect(chassisPayload.max_roof_load_lbs).toBe(330);
+    expect(chassisPayload.max_roof_load_lbs).toBe(220);
     expect(chassisPayload.is_compliant).toBe(true);
 
     // 3. tools/call calculate_dc_wire_and_fuse
@@ -408,7 +408,7 @@ describe("E2E: chassis_rules and calculate_dc_wire_and_fuse tools", () => {
     expect(abycRes.result?.isError).not.toBe(true);
     const abycPayload = JSON.parse(abycRes.result?.content?.[0]?.text ?? "{}");
     expect(abycPayload.recommended_awg).toBe("2");
-    expect(abycPayload.recommended_fuse_amps).toBe(75);
+    expect(abycPayload.recommended_fuse_amps).toBe(80);
     expect(abycPayload.fuse_type).toBe("MIDI / AMI Fuse");
   });
 });

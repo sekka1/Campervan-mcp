@@ -291,10 +291,16 @@ describe("ABYC E-11 enhancements in calculateVoltageDrop and selectFuseFormFacto
     expect(inside.is_engine_compartment).toBe(true);
     expect(inside.notes).toContain("in engine compartment");
   });
+
+  it("throws when engine-compartment derating causes current to exceed 4/0 AWG ampacity (195A)", () => {
+    expect(() => calculateVoltageDrop(200, 2, 12, 3, true)).toThrow(
+      "exceeds maximum 4/0 AWG ampacity limit"
+    );
+  });
 });
 
 describe("calculateDCWireAndFuse (Spec Section 5 ABYC E-11 105°C)", () => {
-  it("matches the spec's end-to-end trace (60A continuous, 15ft one-way, 12V, 3% drop -> 4 AWG, 75A MIDI fuse)", () => {
+  it("matches the spec's end-to-end trace (60A continuous, 15ft one-way, 12V, 3% drop -> 2 AWG, 80A standard MIDI fuse)", () => {
     const result = calculateDCWireAndFuse({
       system_voltage: 12,
       amperage: 60,
@@ -305,7 +311,7 @@ describe("calculateDCWireAndFuse (Spec Section 5 ABYC E-11 105°C)", () => {
     // round_trip = 30ft, requiredCM = (10.75 * 60 * 30) / 0.36 = 53,750 CM -> 2 AWG (66,360 CM)
     expect(result.recommended_awg).toBe("2");
     expect(result.round_trip_feet).toBe(30);
-    expect(result.recommended_fuse_amps).toBe(75);
+    expect(result.recommended_fuse_amps).toBe(80);
     expect(result.fuse_type).toBe("MIDI / AMI Fuse");
     expect(result.exact_voltage_drop_percent).toBeLessThanOrEqual(3);
   });
@@ -356,17 +362,17 @@ describe("calculateDCWireAndFuse (Spec Section 5 ABYC E-11 105°C)", () => {
       allowable_drop_percent: 3,
       is_engine_compartment: false,
     });
-    expect(mrbf.recommended_fuse_amps).toBe(188);
+    expect(mrbf.recommended_fuse_amps).toBe(200);
     expect(mrbf.fuse_type).toBe("MRBF (Marine Rated Battery Fuse) or MEGA");
 
     const classT = calculateDCWireAndFuse({
       system_voltage: 48,
-      amperage: 300,
+      amperage: 310,
       one_way_distance_feet: 5,
       allowable_drop_percent: 3,
       is_engine_compartment: false,
     });
-    expect(classT.recommended_fuse_amps).toBe(330);
+    expect(classT.recommended_fuse_amps).toBe(400);
     expect(classT.fuse_type).toBe("Class T Fuse (Essential for LiFePO4 high AIC ratings)");
   });
 
@@ -380,6 +386,18 @@ describe("calculateDCWireAndFuse (Spec Section 5 ABYC E-11 105°C)", () => {
         is_engine_compartment: false,
       })
     ).toThrow("Exceeds 4/0 AWG limits. Consider upgrading system voltage to 24V or 48V.");
+  });
+
+  it("never returns a 0A fuse for fractional-amp loads (e.g. 0.1A rounds to 5A standard fuse)", () => {
+    const tiny = calculateDCWireAndFuse({
+      system_voltage: 12,
+      amperage: 0.1,
+      one_way_distance_feet: 5,
+      allowable_drop_percent: 3,
+      is_engine_compartment: false,
+    });
+    expect(tiny.recommended_fuse_amps).toBe(5);
+    expect(tiny.fuse_type).toBe("ATC/ATO Blade");
   });
 
   it("validates positive amperage and distance", () => {
