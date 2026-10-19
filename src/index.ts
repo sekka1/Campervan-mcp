@@ -10,6 +10,7 @@ import {
   extractMeteredToolCalls,
   authenticateAndCheckBalance,
   recordToolUsage,
+  isMeteringAllowAll,
   type MeteredToolCall,
 } from "./utils/metering.js";
 
@@ -18,34 +19,36 @@ export interface Env {
   VECTOR_INDEX: VectorizeIndex;
   AI?: Ai;
   CDN_BASE_URL?: string;
-  /** When set to "true", every MCP request must carry a valid Bearer API key */
-  REQUIRE_AUTH?: string;
+  /**
+   * When "true" (current default), all MCP requests bypass API-key auth and microcent billing.
+   * Set to "false" to enforce SHA-256 Bearer API-key authentication and per-tool metering.
+   */
+  METERING_ALLOW_ALL?: string;
 }
 
 export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
-    const authHeader = request.headers.get("Authorization");
-    const requireAuth = env.REQUIRE_AUTH === "true";
-    const shouldAuthenticate = requireAuth || authHeader !== null;
+    const allowAll = isMeteringAllowAll(env.METERING_ALLOW_ALL);
 
     let meteredCalls: MeteredToolCall[] = [];
-    if (request.method === "POST") {
-      try {
-        const cloned = await request.clone().json();
-        meteredCalls = extractMeteredToolCalls(cloned);
-      } catch {
-        // Non-JSON or malformed body will be handled by the MCP transport
-      }
-    }
-
-    const totalRequiredMicrocents = meteredCalls.reduce(
-      (sum, call) => sum + call.costMicrocents,
-      0
-    );
-
     let authenticatedAccountId: string | undefined;
 
-    if (shouldAuthenticate) {
+    if (!allowAll) {
+      if (request.method === "POST") {
+        try {
+          const cloned = await request.clone().json();
+          meteredCalls = extractMeteredToolCalls(cloned);
+        } catch {
+          // Non-JSON or malformed body will be handled by the MCP transport
+        }
+      }
+
+      const totalRequiredMicrocents = meteredCalls.reduce(
+        (sum, call) => sum + call.costMicrocents,
+        0
+      );
+
+      const authHeader = request.headers.get("Authorization");
       const token = extractBearerToken(authHeader);
       if (!token) {
         return new Response(
@@ -91,7 +94,12 @@ export default {
     await mcp.connect(transport);
     const response = await transport.handleRequest(request);
 
-    if (authenticatedAccountId && meteredCalls.length > 0 && response.status === 200) {
+    if (
+      !allowAll &&
+      authenticatedAccountId &&
+      meteredCalls.length > 0 &&
+      response.status === 200
+    ) {
       let successfulCalls = meteredCalls;
       try {
         const respBody = await response.clone().json();

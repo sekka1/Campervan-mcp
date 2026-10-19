@@ -180,3 +180,11 @@ export async function recordToolUsage(
   }
   return true;
 }
+
+/**
+ * Determines whether the metering bypass flag (`METERING_ALLOW_ALL`) is active.
+ * Defaults to `true` unless `METERING_ALLOW_ALL` is explicitly set to `"false"`.
+ */
+export function isMeteringAllowAll(meteringAllowAll?: string): boolean {
+  return meteringAllowAll !== "false";
+}

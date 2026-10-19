@@ -424,11 +424,26 @@ describe("E2E: Bearer API key authentication and microcent metering", () => {
     passThroughOnException: vi.fn(),
   } as unknown as ExecutionContext;
 
-  it("returns 401 when REQUIRE_AUTH is true and Authorization header is missing", async () => {
+  it("allows unauthenticated requests when METERING_ALLOW_ALL is 'true' (default)", async () => {
     const env = {
       DB: mockD1Database,
       VECTOR_INDEX: { query: vi.fn() } as unknown as VectorizeIndex,
-      REQUIRE_AUTH: "true",
+      METERING_ALLOW_ALL: "true",
+    };
+    const req = new Request("http://localhost/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    });
+    const res = await worker.fetch(req, env, ctx);
+    expect(res.status).toBe(200);
+  });
+
+  it("returns 401 when METERING_ALLOW_ALL is 'false' and Authorization header is missing", async () => {
+    const env = {
+      DB: mockD1Database,
+      VECTOR_INDEX: { query: vi.fn() } as unknown as VectorizeIndex,
+      METERING_ALLOW_ALL: "false",
     };
     const req = new Request("http://localhost/", {
       method: "POST",
@@ -452,7 +467,7 @@ describe("E2E: Bearer API key authentication and microcent metering", () => {
     const env = {
       DB: db,
       VECTOR_INDEX: { query: vi.fn() } as unknown as VectorizeIndex,
-      REQUIRE_AUTH: "true",
+      METERING_ALLOW_ALL: "false",
     };
 
     const req = new Request("http://localhost/", {
@@ -491,7 +506,7 @@ describe("E2E: Bearer API key authentication and microcent metering", () => {
     const env = {
       DB: db,
       VECTOR_INDEX: { query: vi.fn() } as unknown as VectorizeIndex,
-      REQUIRE_AUTH: "true",
+      METERING_ALLOW_ALL: "false",
     };
 
     const req = new Request("http://localhost/", {

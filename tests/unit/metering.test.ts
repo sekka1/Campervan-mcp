@@ -6,6 +6,7 @@ import {
   extractMeteredToolCalls,
   authenticateAndCheckBalance,
   recordToolUsage,
+  isMeteringAllowAll,
   SEARCH_TOOL_COST_MICROCENTS,
   DETERMINISTIC_TOOL_COST_MICROCENTS,
 } from "../../src/utils/metering";
@@ -121,5 +122,13 @@ describe("recordToolUsage", () => {
 
     const ok = await recordToolUsage(db, "acc_1", "search_van_manuals", 2000, 5);
     expect(ok).toBe(false);
+  });
+});
+
+describe("isMeteringAllowAll", () => {
+  it("defaults to true when undefined or 'true', and returns false only when set to 'false'", () => {
+    expect(isMeteringAllowAll(undefined)).toBe(true);
+    expect(isMeteringAllowAll("true")).toBe(true);
+    expect(isMeteringAllowAll("false")).toBe(false);
   });
 });
