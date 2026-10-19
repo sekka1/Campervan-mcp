@@ -36,6 +36,7 @@ const mockD1Database: D1Database = {
 
 import { calculateVoltageDrop, calculateDCWireAndFuse, calculateVanPayload, validateSolarArray, evaluateChassisRules } from "../../src/utils/formulas";
 import worker from "../../src/index";
+import { hashApiKey } from "../../src/utils/metering";
 import { queryComponentSpecs } from "../../src/utils/db";
 
 // ---------------------------------------------------------------------------
@@ -410,5 +411,110 @@ describe("E2E: chassis_rules and calculate_dc_wire_and_fuse tools", () => {
     expect(abycPayload.recommended_awg).toBe("2");
     expect(abycPayload.recommended_fuse_amps).toBe(80);
     expect(abycPayload.fuse_type).toBe("MIDI / AMI Fuse");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 5: API Key Auth & Per-Tool Microcent Metering E2E Simulation
+// ---------------------------------------------------------------------------
+
+describe("E2E: Bearer API key authentication and microcent metering", () => {
+  const ctx = {
+    waitUntil: vi.fn(),
+    passThroughOnException: vi.fn(),
+  } as unknown as ExecutionContext;
+
+  it("returns 401 when REQUIRE_AUTH is true and Authorization header is missing", async () => {
+    const env = {
+      DB: mockD1Database,
+      VECTOR_INDEX: { query: vi.fn() } as unknown as VectorizeIndex,
+      REQUIRE_AUTH: "true",
+    };
+    const req = new Request("http://localhost/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    });
+    const res = await worker.fetch(req, env, ctx);
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 402 when account balance is lower than the requested tool cost", async () => {
+    const rawKey = "test-low-balance-key";
+    const expectedHash = await hashApiKey(rawKey);
+    const first = vi.fn().mockResolvedValue({ id: "acc_low", balance_microcents: 300, is_active: 1 });
+    const bind = vi.fn().mockReturnValue({ first });
+    const db = {
+      prepare: vi.fn().mockReturnValue({ bind }),
+      batch: vi.fn(),
+    } as unknown as D1Database;
+
+    const env = {
+      DB: db,
+      VECTOR_INDEX: { query: vi.fn() } as unknown as VectorizeIndex,
+      REQUIRE_AUTH: "true",
+    };
+
+    const req = new Request("http://localhost/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        Authorization: `Bearer ${rawKey}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "chassis_rules",
+          arguments: { chassis: "ford_transit", rule_type: "electrical_tap" },
+        },
+      }),
+    });
+
+    const res = await worker.fetch(req, env, ctx);
+    expect(res.status).toBe(402);
+    expect(bind).toHaveBeenCalledWith(expectedHash);
+  });
+
+  it("authenticates valid Bearer key, executes tool, and deducts 500 microcents in D1 batch", async () => {
+    const rawKey = "test-funded-key";
+    const first = vi.fn().mockResolvedValue({ id: "acc_ok", balance_microcents: 10000, is_active: 1 });
+    const bind = vi.fn().mockReturnValue({ first });
+    const batch = vi.fn().mockResolvedValue([{ meta: { changes: 1 } }, { meta: { changes: 1 } }]);
+    const db = {
+      prepare: vi.fn().mockReturnValue({ bind }),
+      batch,
+    } as unknown as D1Database;
+
+    const env = {
+      DB: db,
+      VECTOR_INDEX: { query: vi.fn() } as unknown as VectorizeIndex,
+      REQUIRE_AUTH: "true",
+    };
+
+    const req = new Request("http://localhost/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        Authorization: `Bearer ${rawKey}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: {
+          name: "chassis_rules",
+          arguments: { chassis: "ford_transit", rule_type: "electrical_tap" },
+        },
+      }),
+    });
+
+    const res = await worker.fetch(req, env, ctx);
+    expect(res.status).toBe(200);
+    expect(batch).toHaveBeenCalledTimes(1);
+    expect(bind).toHaveBeenCalledWith(500, "acc_ok", 500);
   });
 });
