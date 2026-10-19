@@ -195,6 +195,14 @@ When `D1_DATABASE_ID` is set (plus a `CLOUDFLARE_API_TOKEN` with D1 edit permiss
 ingestion scripts also write the `documents` and `document_chunks` rows via the D1 REST API,
 using the Vectorize vector ID as `document_chunks.id`. Without it, only Vectorize is updated.
 
+With D1 enabled, ingestion also extracts schematic-sized images (≥100×100 px, up to 3 per page)
+from each PDF, uploads them as PNGs to R2 under `schematics/<document_id>/p<page>-<n>.png`
+(bucket `R2_BUCKET_NAME`, default `campervan-mcp`), writes `schematic_images` rows, links
+`document_chunks.schematic_image_id` to the first image on the chunk's page, and fills
+`section_title` from the first heading-like line on the page. Set the `CDN_BASE_URL` Worker
+variable to a public URL serving the bucket and `search_van_manuals` results will include a
+`schematic_url` next to `schematic_r2_key`.
+
 `doc_type`/`category` are inferred from the file's folder prefix:
 
 | Path prefix                  | `doc_type`        | `category`  |

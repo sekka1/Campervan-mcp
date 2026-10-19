@@ -6,8 +6,10 @@ on:
     paths:
       - 'scripts/ingest-manuals.ts'
       - 'scripts/sync-r2-manuals.ts'
+      - 'scripts/schematics.ts'
       - 'scripts/e2e-vectorize-smoke-test.ts'
       - 'tests/fixtures/sample-manual.pdf'
+      - 'tests/fixtures/schematic-manual.pdf'
   workflow_dispatch: {}
 
 permissions:

@@ -219,7 +219,13 @@ export interface HybridSearchResult {
   applicable_chassis?: string;
   subsystem?: string;
   schematic_r2_key?: string;
+  schematic_url?: string;
   schematic_caption?: string;
+}
+
+/** Joins the CDN base URL and an R2 key into a public image URL. */
+export function buildSchematicUrl(cdnBaseUrl: string, r2Key: string): string {
+  return `${cdnBaseUrl.replace(/\/+$/, "")}/${r2Key.split("/").map(encodeURIComponent).join("/")}`;
 }
 
 /**
@@ -231,7 +237,7 @@ export async function hybridSearch(
   vectorIndex: VectorizeIndex,
   db: D1Database | undefined,
   queryVector: number[],
-  options: { topK?: number; source?: string; chassis?: string; subsystem?: string } = {}
+  options: { topK?: number; source?: string; chassis?: string; subsystem?: string; cdnBaseUrl?: string } = {}
 ): Promise<HybridSearchResult[]> {
   const filter: VectorizeVectorMetadataFilter = {};
   if (options.source) filter["source"] = { $eq: options.source };
@@ -262,6 +268,9 @@ export async function hybridSearch(
       applicable_chassis: h.applicable_chassis,
       subsystem: h.subsystem,
       ...(h.schematic_r2_key ? { schematic_r2_key: h.schematic_r2_key } : {}),
+      ...(h.schematic_r2_key && options.cdnBaseUrl
+        ? { schematic_url: buildSchematicUrl(options.cdnBaseUrl, h.schematic_r2_key) }
+        : {}),
       ...(h.schematic_caption ? { schematic_caption: h.schematic_caption } : {}),
     };
   });
