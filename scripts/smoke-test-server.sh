@@ -17,6 +17,9 @@
 
 set -euo pipefail
 
+export LOCAL_DEV=true
+export CI_SMOKE_TEST=true
+
 PORT="${PORT:-8787}"
 BASE_URL="http://127.0.0.1:${PORT}"
 STARTUP_WAIT="${STARTUP_WAIT:-60}"

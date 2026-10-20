@@ -1,5 +1,10 @@
 import { bindings, defineConfig } from "cf/config";
 
+const isLocalDev =
+  process.env.LOCAL_DEV === "true" ||
+  process.env.SKIP_REMOTE_AI === "true" ||
+  process.env.CI_SMOKE_TEST === "true";
+
 export default defineConfig({
 	worker: {
 		name: "campervan-mcp-server",
@@ -17,7 +22,7 @@ export default defineConfig({
 			VECTOR_INDEX: bindings.vectorize({
 				name: "van_manuals_index",
 			}),
-			AI: bindings.ai(),
+			...(isLocalDev ? {} : { AI: bindings.ai() }),
 		},
 	},
 });
