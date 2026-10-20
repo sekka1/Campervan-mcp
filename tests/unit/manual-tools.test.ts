@@ -93,4 +93,55 @@ describe("registerManualTools - lookup_vehicle_electrical_specs", () => {
     expect(parsed.results).toEqual([]);
     expect(parsed.message).toBe("No authoritative specifications matched your query.");
   });
+
+  it("fails fast with clear error message when Workers AI embedding throws", async () => {
+    const mcp = new McpServer({ name: "test-mcp", version: "1.0.0" });
+    const vectorIndex = { query: vi.fn() } as unknown as VectorizeIndex;
+    const ai = {
+      run: vi.fn().mockRejectedValue(new Error("Rate limit exceeded on @cf/baai/bge-base-en-v1.5")),
+    } as unknown as Ai;
+
+    registerManualTools(mcp, vectorIndex, ai);
+    const registeredTools = (mcp as unknown as { _registeredTools: Record<string, { handler: (...args: unknown[]) => Promise<{ content: Array<{ type: string; text: string }> }> }> })._registeredTools;
+
+    await expect(
+      registeredTools["lookup_vehicle_electrical_specs"].handler({
+        query: "Transit CCP2 location",
+        chassis: "ford_transit",
+      })
+    ).rejects.toThrow("Failed to generate text embedding via Workers AI");
+  });
+
+  it("registers and executes inspect_manual_chunks when D1 db is provided", async () => {
+    const mcp = new McpServer({ name: "test-mcp", version: "1.0.0" });
+    const vectorIndex = { query: vi.fn() } as unknown as VectorizeIndex;
+    const bind = vi.fn().mockReturnValue({
+      all: vi.fn().mockResolvedValue({
+        results: [
+          {
+            id: "MY24_Transit#chunk_42",
+            page_number: 148,
+            section_title: "4.6.3 Power Connections",
+            snippet: "The CCP2 is located on the driver seat pedestal...",
+          },
+        ],
+      }),
+    });
+    const db = {
+      prepare: vi.fn().mockReturnValue({ bind }),
+    } as unknown as D1Database;
+
+    registerManualTools(mcp, vectorIndex, undefined, db);
+    const registeredTools = (mcp as unknown as { _registeredTools: Record<string, { handler: (...args: unknown[]) => Promise<{ content: Array<{ type: string; text: string }> }> }> })._registeredTools;
+
+    expect(registeredTools["inspect_manual_chunks"]).toBeDefined();
+    const res = await registeredTools["inspect_manual_chunks"].handler({
+      keyword: "CCP2",
+      limit: 2,
+    });
+    const parsed = JSON.parse(res.content[0].text);
+    expect(parsed.keyword).toBe("CCP2");
+    expect(parsed.count).toBe(1);
+    expect(parsed.results[0].section_title).toBe("4.6.3 Power Connections");
+  });
 });

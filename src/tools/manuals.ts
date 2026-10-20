@@ -13,12 +13,28 @@ import { hybridSearch } from "../utils/db.js";
  */
 async function generateEmbedding(text: string, ai?: Ai): Promise<number[]> {
   if (ai) {
-    const response = await ai.run("@cf/baai/bge-base-en-v1.5", { text: [text] });
-    const result = response as unknown as { data: number[][] };
-    return result.data[0];
+    try {
+      const response = await ai.run("@cf/baai/bge-base-en-v1.5", { text: [text] });
+      const result = response as unknown as { data: number[][] };
+      if (result && Array.isArray(result.data) && Array.isArray(result.data[0]) && result.data[0].length > 0) {
+        return result.data[0];
+      }
+      throw new Error(
+        "Workers AI returned invalid embedding response structure: " + JSON.stringify(response)
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("Workers AI embedding error for model @cf/baai/bge-base-en-v1.5:", msg);
+      throw new Error(
+        "Failed to generate text embedding via Workers AI (@cf/baai/bge-base-en-v1.5): " + msg
+      );
+    }
   }
 
-  // Fallback: return zero vector for development/testing
+  // Fallback: return zero vector only for local development/testing without an AI binding
+  console.warn(
+    "Workers AI binding (env.AI) is unavailable; returning zero vector for local dev/testing."
+  );
   return new Array(768).fill(0) as number[];
 }
 
@@ -160,4 +176,58 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
     }
   );
 
+
+  // -------------------------------------------------------------------------
+  // Diagnostic Tool: inspect_manual_chunks
+  // -------------------------------------------------------------------------
+  if (db) {
+    mcp.registerTool(
+      "inspect_manual_chunks",
+      {
+        description:
+          "Internal diagnostic tool to inspect ingested manual chunks from the D1 database using SQL text pattern matching.",
+        inputSchema: {
+          keyword: z
+            .string()
+            .min(1)
+            .describe("Keyword or pattern to search in chunk_text (e.g., CCP2, Customer Connection Point)"),
+          limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(50)
+            .default(5)
+            .optional()
+            .describe("Maximum number of matching chunks to return (default 5)"),
+        },
+      },
+      async (args) => {
+        const limit = args.limit ?? 5;
+        const pattern = "%" + args.keyword + "%";
+        const queryResult = await db
+          .prepare(
+            "SELECT id, page_number, section_title, substr(chunk_text, 1, 150) AS snippet FROM document_chunks WHERE chunk_text LIKE ? OR chunk_text LIKE ? LIMIT ?"
+          )
+          .bind(pattern, "%Customer Connection Point%", limit)
+          .all<{ id: string; page_number: number; section_title: string | null; snippet: string }>();
+
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(
+                {
+                  keyword: args.keyword,
+                  count: queryResult.results.length,
+                  results: queryResult.results,
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+    );
+  }
 }

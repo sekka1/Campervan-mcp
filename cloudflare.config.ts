@@ -17,6 +17,7 @@ export default defineConfig({
 			VECTOR_INDEX: bindings.vectorize({
 				name: "van_manuals_index",
 			}),
+			AI: bindings.ai(),
 		},
 	},
 });
