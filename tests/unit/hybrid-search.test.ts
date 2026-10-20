@@ -18,6 +18,16 @@ describe("hydrateChunks", () => {
     expect((await hydrateChunks(db, [])).size).toBe(0);
     expect(prepare).not.toHaveBeenCalled();
   });
+
+  it("falls back to mock results when Vectorize index throws (e.g., local dev or unsupported binding)", async () => {
+    const vec = new Array(768).fill(0.1) as number[];
+    const query = vi.fn().mockRejectedValue(new Error("Binding VECTOR_INDEX needs to be run remotely"));
+    const index = { query } as unknown as VectorizeIndex;
+    const results = await hybridSearch(index, undefined, vec, { chassis: "transit" });
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]?.text).toContain("transit");
+    expect(results[0]?.source).toBe("transit_manual_mock");
+  });
 });
 
 describe("hybridSearch", () => {

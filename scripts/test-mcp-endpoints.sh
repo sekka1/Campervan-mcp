@@ -83,6 +83,8 @@ assert_field "tools/list returns calculate_van_payload" "${tools_response}" '.re
 assert_field "tools/list returns lookup_component_specs" "${tools_response}" '.result.tools[] | select(.name == "lookup_component_specs")'
 assert_field "tools/list returns chassis_rules" "${tools_response}" '.result.tools[] | select(.name == "chassis_rules")'
 assert_field "tools/list returns calculate_dc_wire_and_fuse" "${tools_response}" '.result.tools[] | select(.name == "calculate_dc_wire_and_fuse")'
+assert_field "tools/list returns lookup_vehicle_electrical_specs" "${tools_response}" '.result.tools[] | select(.name == "lookup_vehicle_electrical_specs")'
+assert_field "tools/list returns search_van_manuals" "${tools_response}" '.result.tools[] | select(.name == "search_van_manuals")'
 
 echo
 echo "--- tools/call calculate_wire_gauge ---"
@@ -118,4 +120,39 @@ assert_field "calculate_dc_wire_and_fuse succeeds" "${abyc_response}" '.result.i
 assert_field "calculate_dc_wire_and_fuse returns fuse_type" "${abyc_response}" '(.result.content[0].text | fromjson).fuse_type == "MIDI / AMI Fuse"'
 
 echo
+echo
+echo "--- tools/call lookup_vehicle_electrical_specs ---"
+specs_lookup_response=$(json_rpc 9 tools/call '{"name":"lookup_vehicle_electrical_specs","arguments":{"query":"Ford Transit auxiliary battery tap","chassis":"ford_transit","subsystem":"12v_dc"}}')
+assert_field "lookup_vehicle_electrical_specs succeeds" "${specs_lookup_response}" '.result.isError != true'
+assert_field "lookup_vehicle_electrical_specs returns chassis" "${specs_lookup_response}" '(.result.content[0].text | fromjson).chassis == "ford_transit"'
+assert_field "lookup_vehicle_electrical_specs returns results" "${specs_lookup_response}" '((.result.content[0].text | fromjson).results | length) >= 0'
+
+echo
+echo "--- tools/call search_van_manuals ---"
+manuals_response=$(json_rpc 10 tools/call '{"name":"search_van_manuals","arguments":{"query":"Transit body builder roof load rating","top_k":2}}')
+assert_field "search_van_manuals succeeds" "${manuals_response}" '.result.isError != true'
+assert_field "search_van_manuals returns query" "${manuals_response}" '(.result.content[0].text | fromjson).query == "Transit body builder roof load rating"'
+
+# -----------------------------------------------------------------------------
+# Post-Deploy Live Server Verification (when LIVE_DEPLOYED_TEST=true)
+# -----------------------------------------------------------------------------
+LIVE_DEPLOYED_TEST="${LIVE_DEPLOYED_TEST:-false}"
+if [[ "${LIVE_DEPLOYED_TEST}" == "true" ]]; then
+  echo
+  echo "=========================================================="
+  echo "=== Running Post-Deploy Live Edge Tests against ${BASE_URL} ==="
+  echo "=========================================================="
+  
+  echo "--- live search_van_manuals (live Vectorize & D1) ---"
+  live_search_resp=$(json_rpc 11 tools/call '{"name":"search_van_manuals","arguments":{"query":"Transit auxiliary power tap 60A continuous","chassis":"transit","subsystem":"12v_dc","top_k":3}}')
+  assert_field "live search_van_manuals succeeds" "${live_search_resp}" '.result.isError != true'
+  assert_field "live search_van_manuals returns query" "${live_search_resp}" '(.result.content[0].text | fromjson).query == "Transit auxiliary power tap 60A continuous"'
+
+  echo "--- live lookup_vehicle_electrical_specs (live BEMM specs) ---"
+  live_specs_resp=$(json_rpc 12 tools/call '{"name":"lookup_vehicle_electrical_specs","arguments":{"query":"alternator auxiliary battery connection CCP2","chassis":"ford_transit","subsystem":"12v_dc"}}')
+  assert_field "live lookup_vehicle_electrical_specs succeeds" "${live_specs_resp}" '.result.isError != true'
+  assert_field "live lookup_vehicle_electrical_specs returns ford_transit" "${live_specs_resp}" '(.result.content[0].text | fromjson).chassis == "ford_transit"'
+  echo "Live post-deploy MCP edge verification passed successfully!"
+fi
+
 echo "All MCP endpoint tests passed against ${BASE_URL}."

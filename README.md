@@ -13,15 +13,18 @@ It gives AI assistants (Claude, etc.) tool access to deterministic electrical ca
 
 ## Tools
 
-| Tool | Description |
-| --- | --- |
-| `calculate_wire_gauge` | Calculates recommended AWG wire size, conductor resistance, voltage drop percentage, and fuse sizing for a DC circuit based on electrical load, wire run distance, and system voltage. |
-| `validate_solar_array` | Validates a solar panel string configuration (series/parallel) against MPPT charge controller specifications, checking cold-weather open-circuit voltage (Voc) safety and current limits. |
-| `calculate_van_payload` | Calculates total component weight against vehicle GVWR for Sprinter, Transit, and Promaster vans. Returns remaining payload capacity and estimated axle load distribution. |
-| `list_van_models` | Lists all supported van models with their GVWR, curb weight, maximum payload, and axle ratings. |
-| `lookup_component_specs` | Queries the D1 database for component specifications including terminal stud sizes, max continuous amp ratings, dimensions, and idle power draw. |
-| `get_component_by_model` | Retrieves exact specifications for a component by its model number from the D1 database. |
-| `search_van_manuals` | Searches the vector database of campervan documentation using semantic similarity (wiring diagrams, error codes, body builder guides, equipment manuals). |
+| Tool | Description | Cost (Microcents) |
+| --- | --- | --- |
+| `lookup_vehicle_electrical_specs` | Queries vetted OEM Body and Equipment Mounting Manuals (Ford Transit, Sprinter, ProMaster) and component documentation by chassis and subsystem. | 2,000 ($0.002) |
+| `search_van_manuals` | Searches the vector database of campervan documentation using semantic similarity (wiring diagrams, error codes, body builder guides, equipment manuals). | 2,000 ($0.002) |
+| `calculate_dc_wire_and_fuse` | Deterministic ABYC E-11 DC wire gauge (AWG 16 to 4/0), engine compartment derating, exact voltage drop %, and fuse sizing (ATC/MIDI/MRBF/Class T). | 500 ($0.0005) |
+| `calculate_wire_gauge` | Calculates recommended AWG wire size, conductor resistance, voltage drop percentage, and fuse sizing for DC circuits. | 500 ($0.0005) |
+| `chassis_rules` | Deterministic OEM body builder rules for high-current tapping (Transit CCP2, Sprinter EK1/F55, ProMaster battery tap), upfitter switches, and roof/chassis mounting. | 500 ($0.0005) |
+| `validate_solar_array` | Validates solar panel string configuration (series/parallel) against MPPT charge controller specifications with cold-weather Voc safety margins. | 500 ($0.0005) |
+| `calculate_van_payload` | Calculates total component weight against vehicle GVWR for Sprinter, Transit, and Promaster vans with estimated axle distribution. | 500 ($0.0005) |
+| `list_van_models` | Lists all supported van models with their GVWR, curb weight, maximum payload, and axle ratings. | 500 ($0.0005) |
+| `lookup_component_specs` | Queries the D1 database for component specifications including terminal stud sizes, max continuous amp ratings, dimensions, and idle power draw. | 2,000 ($0.002) |
+| `get_component_by_model` | Retrieves exact specifications for a component by its model number from the D1 database. | 2,000 ($0.002) |
 
 ## Architecture
 
@@ -140,6 +143,34 @@ To deploy manually instead, update `cloudflare.config.ts` with your own D1
 
 ```bash
 pnpm deploy
+```
+
+
+## API Key Authentication & Metering
+
+The server includes pre-funded API key authentication and fractional microcent metering backed by Cloudflare D1 (`accounts` and `usage_records` tables).
+
+### Feature Flags (`cloudflare.config.ts`)
+
+- **`AUTH_ENABLED`** (default `"false"` during testing): Set to `"true"` to require a valid `Authorization: Bearer cv_live_...` API key on all requests.
+- **`METERING_ALLOW_ALL`** (default `"true"` during testing): Set to `"false"` to enforce preflight balance verification and atomic per-tool microcent deductions.
+
+### Account & Key Management CLI (`scripts/manage-keys.ts`)
+
+Use the operational CLI to provision accounts, generate cryptographically secure API keys, and manage balances:
+
+```bash
+# Create a new account with default $10.00 (10,000,000 microcents) balance locally:
+npx tsx scripts/manage-keys.ts create --local
+
+# Create an account on remote Cloudflare D1 with custom balance:
+CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... npx tsx scripts/manage-keys.ts create --id my_client --balance 5000000
+
+# Fund an existing account with additional microcents:
+npx tsx scripts/manage-keys.ts fund --id my_client --amount 2500000 --local
+
+# Inspect account balance and status:
+npx tsx scripts/manage-keys.ts inspect --id my_client --local
 ```
 
 ## Ingesting Documentation
