@@ -114,7 +114,7 @@ export async function searchManuals(
 ): Promise<ManualChunk[]> {
   try {
     const queryOptions: VectorizeQueryOptions = {
-      topK: options.topK ?? 5,
+      topK: options.topK ?? 8,
       returnMetadata: "all",
     };
     if (options.filter !== undefined) {
@@ -275,7 +275,7 @@ export async function hybridSearch(
   if (options.subsystem) filter["subsystem"] = { $eq: options.subsystem };
 
   const matches = await searchManuals(vectorIndex, queryVector, {
-    topK: options.topK ?? 5,
+    topK: options.topK ?? 8,
     ...(Object.keys(filter).length > 0 ? { filter } : {}),
   });
   const hydrated = db ? await hydrateChunks(db, matches.map((m) => m.id)) : new Map<string, HydratedChunk>();
@@ -285,10 +285,11 @@ export async function hybridSearch(
     if (!h) {
       return { id: m.id, score: m.score, source: m.metadata.source, page: m.metadata.page, section: m.metadata.section, text: m.metadata.text };
     }
+    const sourceName = m.metadata.source && m.metadata.source !== "unknown" ? m.metadata.source : h.document_title;
     return {
       id: m.id,
       score: m.score,
-      source: m.metadata.source,
+      source: sourceName,
       page: h.page_number,
       section: h.section_title ?? undefined,
       text: h.chunk_text,

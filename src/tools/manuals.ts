@@ -59,7 +59,7 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
           .int()
           .min(1)
           .max(20)
-          .default(5)
+          .default(8)
           .describe("Number of most relevant document chunks to return (default 5, max 20)"),
         source_filter: z
           .string()
@@ -81,7 +81,7 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
       const queryVector = await generateEmbedding(args.query, ai);
 
       const results = await hybridSearch(vectorIndex, db, queryVector, {
-        topK: args.top_k,
+        topK: args.top_k ?? 8,
         ...(cdnBaseUrl ? { cdnBaseUrl } : {}),
         ...(args.source_filter ? { source: args.source_filter } : {}),
         ...(args.chassis ? { chassis: args.chassis } : {}),
@@ -96,7 +96,13 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
               query: args.query,
             }
           : {
-              results: results.map(({ id, ...rest }) => ({ chunk_id: id, ...rest })),
+              results: results.map(({ id, source, document_title, manufacturer, ...rest }) => ({
+                chunk_id: id,
+                source: source && source !== "unknown" ? source : (document_title ?? "unknown"),
+                document_title,
+                manufacturer: manufacturer && manufacturer !== "unknown" ? manufacturer : undefined,
+                ...rest,
+              })),
               count: results.length,
               query: args.query,
             };
@@ -141,7 +147,7 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
           .int()
           .min(1)
           .max(20)
-          .default(5)
+          .default(8)
           .optional()
           .describe("Maximum number of authoritative specification chunks to return (default 5, max 20)"),
       },
@@ -164,7 +170,13 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
               chassis: args.chassis,
             }
           : {
-              results: results.map(({ id, ...rest }) => ({ chunk_id: id, ...rest })),
+              results: results.map(({ id, source, document_title, manufacturer, ...rest }) => ({
+                chunk_id: id,
+                source: source && source !== "unknown" ? source : (document_title ?? "unknown"),
+                document_title,
+                manufacturer: manufacturer && manufacturer !== "unknown" ? manufacturer : undefined,
+                ...rest,
+              })),
               count: results.length,
               query: args.query,
               chassis: args.chassis,
@@ -196,7 +208,7 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
             .int()
             .min(1)
             .max(50)
-            .default(5)
+            .default(8)
             .optional()
             .describe("Maximum number of matching chunks to return (default 5)"),
         },

@@ -145,4 +145,59 @@ describe("registerManualTools - lookup_vehicle_electrical_specs", () => {
     expect(parsed.results[0].section_title).toBe("4.6.3 Power Connections");
     expect(bind).toHaveBeenCalledWith("%CCP2%", "%CCP2%", 2);
   });
+
+  it("defaults to top_k 8 and populates source and manufacturer from D1 in search_van_manuals", async () => {
+    const mcp = new McpServer({ name: "test-mcp", version: "1.0.0" });
+    const query = vi.fn().mockResolvedValue({
+      matches: [
+        {
+          id: "chunk_abc",
+          score: 0.88,
+          metadata: { text: "Ford Transit auxiliary battery tap", source: "unknown" },
+        },
+      ],
+    });
+    const vectorIndex = { query } as unknown as VectorizeIndex;
+    const bind = vi.fn().mockReturnValue({
+      all: vi.fn().mockResolvedValue({
+        results: [
+          {
+            id: "chunk_abc",
+            document_id: "doc_ford_1",
+            document_title: "Ford Transit BEMM 2024",
+            category: "oem_bemm",
+            manufacturer: "Ford",
+            applicable_chassis: "transit",
+            page_number: 145,
+            section_title: "4.24.4 Customer Connection Points",
+            subsystem: "12v_dc",
+            chunk_text: "CCP1 60A and CCP2 175A connection points on driver seat pedestal",
+            schematic_r2_key: null,
+            schematic_caption: null,
+          },
+        ],
+      }),
+    });
+    const db = {
+      prepare: vi.fn().mockReturnValue({ bind }),
+    } as unknown as D1Database;
+
+    registerManualTools(mcp, vectorIndex, undefined, db);
+    const registeredTools = (mcp as unknown as { _registeredTools: Record<string, { handler: (...args: unknown[]) => Promise<{ content: Array<{ type: string; text: string }> }> }> })._registeredTools;
+
+    const res = await registeredTools["search_van_manuals"].handler({
+      query: "Customer Connection Points CCP1 CCP2 driver seat",
+    });
+
+    // Verify topK defaults to 8
+    expect(query).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ topK: 8 }));
+
+    const parsed = JSON.parse(res.content[0].text);
+    expect(parsed.count).toBe(1);
+    expect(parsed.results[0].chunk_id).toBe("chunk_abc");
+    // Verify source and manufacturer populated from D1 instead of "unknown"
+    expect(parsed.results[0].source).toBe("Ford Transit BEMM 2024");
+    expect(parsed.results[0].document_title).toBe("Ford Transit BEMM 2024");
+    expect(parsed.results[0].manufacturer).toBe("Ford");
+  });
 });
