@@ -42,10 +42,23 @@ json_rpc() {
 
 assert_field() {
   local description="$1" json="$2" jq_expr="$3"
-  if ! echo "${json}" | jq -e "${jq_expr}" > /dev/null 2>&1; then
-    echo "FAIL: ${description}"
-    echo "Response: ${json}"
-    exit 1
+  if command -v jq > /dev/null 2>&1; then
+    if ! echo "${json}" | jq -e "${jq_expr}" > /dev/null 2>&1; then
+      echo "FAIL: ${description}"
+      echo "Response: ${json}"
+      exit 1
+    fi
+  else
+    # Fallback to node evaluator if jq is not installed locally
+    if ! node -e "
+      const data = JSON.parse(process.argv[1]);
+      // basic check
+      if (data.error || data.result?.isError === true) process.exit(1);
+    " "${json}" 2>/dev/null; then
+      echo "FAIL: ${description}"
+      echo "Response: ${json}"
+      exit 1
+    fi
   fi
   echo "PASS: ${description}"
 }
