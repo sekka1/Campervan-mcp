@@ -81,7 +81,7 @@ export async function hashApiKey(rawApiKey: string): Promise<string> {
 }
 
 export interface MeteredToolCall {
-  id: string | number | null;
+  id: string | number;
   name: string;
   costMicrocents: number;
 }
@@ -90,6 +90,12 @@ export interface MeteredToolCall {
  * Extracts all known `tools/call` invocations from a parsed JSON-RPC request body
  * (supports both single JSON-RPC objects and JSON-RPC batch arrays).
  */
+/**
+ * Extracts all known ID-bearing `tools/call` request invocations from a parsed JSON-RPC
+ * request body (supports both single JSON-RPC objects and JSON-RPC batch arrays).
+ * Excludes JSON-RPC notifications (envelopes without a string/number `id`), since
+ * notifications are not dispatched as tool requests.
+ */
 export function extractMeteredToolCalls(payload: unknown): MeteredToolCall[] {
   const items = Array.isArray(payload) ? payload : [payload];
   const calls: MeteredToolCall[] = [];
@@ -97,15 +103,21 @@ export function extractMeteredToolCalls(payload: unknown): MeteredToolCall[] {
   for (const item of items) {
     if (!item || typeof item !== "object") continue;
     const envelope = item as {
-      id?: string | number | null;
+      id?: unknown;
       method?: unknown;
       params?: { name?: unknown };
     };
-    if (envelope.method === "tools/call" && typeof envelope.params?.name === "string") {
+    const hasRequestId =
+      typeof envelope.id === "string" || typeof envelope.id === "number";
+    if (
+      hasRequestId &&
+      envelope.method === "tools/call" &&
+      typeof envelope.params?.name === "string"
+    ) {
       const cost = getToolCostMicrocents(envelope.params.name);
       if (cost !== null) {
         calls.push({
-          id: envelope.id ?? null,
+          id: envelope.id as string | number,
           name: envelope.params.name,
           costMicrocents: cost,
         });
@@ -173,6 +185,52 @@ export async function authenticateAndCheckBalance(
  * Returns true if the balance deduction succeeded, or false if a concurrent request
  * exhausted the balance before the conditional UPDATE ran.
  */
+/**
+ * Atomically deducts the combined tool execution cost for one or more successful calls from
+ * `accounts.balance_microcents` (guarded by `balance_microcents >= ?` so balance can never go
+ * negative or partially settle) and inserts corresponding audit rows into `usage_records`.
+ *
+ * Returns true if the atomic balance deduction succeeded, or false if a concurrent request
+ * exhausted the balance before the conditional UPDATE ran.
+ */
+export async function recordBatchToolUsage(
+  db: D1Database,
+  accountId: string,
+  calls: ReadonlyArray<{ name: string; costMicrocents: number }>,
+  executionTimeMs: number
+): Promise<boolean> {
+  if (calls.length === 0) return true;
+
+  const totalCostMicrocents = calls.reduce((sum, c) => sum + c.costMicrocents, 0);
+  const safeDuration = Math.max(0, Math.round(executionTimeMs));
+
+  const statements = [
+    db
+      .prepare(
+        "UPDATE accounts SET balance_microcents = balance_microcents - ? WHERE id = ? AND is_active = 1 AND balance_microcents >= ?"
+      )
+      .bind(totalCostMicrocents, accountId, totalCostMicrocents),
+    ...calls.map((call) =>
+      db
+        .prepare(
+          "INSERT INTO usage_records (account_id, tool_name, cost_microcents, execution_time_ms) SELECT ?, ?, ?, ? WHERE (SELECT changes()) > 0"
+        )
+        .bind(accountId, call.name, call.costMicrocents, safeDuration)
+    ),
+  ];
+
+  const results = await db.batch(statements);
+  const updateMeta = (results[0] as { meta?: { changes?: number } } | undefined)?.meta;
+  if (updateMeta && typeof updateMeta.changes === "number" && updateMeta.changes === 0) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Deducts a single tool execution cost from `accounts.balance_microcents` and records a usage entry.
+ */
 export async function recordToolUsage(
   db: D1Database,
   accountId: string,
@@ -180,23 +238,10 @@ export async function recordToolUsage(
   costMicrocents: number,
   executionTimeMs: number
 ): Promise<boolean> {
-  const safeDuration = Math.max(0, Math.round(executionTimeMs));
-  const results = await db.batch([
-    db
-      .prepare(
-        "UPDATE accounts SET balance_microcents = balance_microcents - ? WHERE id = ? AND is_active = 1 AND balance_microcents >= ?"
-      )
-      .bind(costMicrocents, accountId, costMicrocents),
-    db
-      .prepare(
-        "INSERT INTO usage_records (account_id, tool_name, cost_microcents, execution_time_ms) SELECT ?, ?, ?, ? WHERE (SELECT changes()) > 0"
-      )
-      .bind(accountId, toolName, costMicrocents, safeDuration),
-  ]);
-
-  const updateMeta = (results[0] as { meta?: { changes?: number } } | undefined)?.meta;
-  if (updateMeta && typeof updateMeta.changes === "number" && updateMeta.changes === 0) {
-    return false;
-  }
-  return true;
+  return recordBatchToolUsage(
+    db,
+    accountId,
+    [{ name: toolName, costMicrocents }],
+    executionTimeMs
+  );
 }

@@ -6,6 +6,7 @@ import {
   extractMeteredToolCalls,
   authenticateAndCheckBalance,
   recordToolUsage,
+  recordBatchToolUsage,
   isAuthEnabled,
   isMeteringAllowAll,
   SEARCH_TOOL_COST_MICROCENTS,
@@ -65,6 +66,17 @@ describe("getToolCostMicrocents & extractMeteredToolCalls", () => {
       null,
     ]);
     expect(batch).toEqual([{ id: 11, name: "search_van_manuals", costMicrocents: 2000 }]);
+  });
+
+  it("excludes notification envelopes (missing or null request id) from metering", () => {
+    const batchWithNotifications = extractMeteredToolCalls([
+      { jsonrpc: "2.0", method: "tools/call", params: { name: "search_van_manuals" } },
+      { jsonrpc: "2.0", id: null, method: "tools/call", params: { name: "calculate_wire_gauge" } },
+      { jsonrpc: "2.0", id: "req-1", method: "tools/call", params: { name: "chassis_rules" } },
+    ]);
+    expect(batchWithNotifications).toEqual([
+      { id: "req-1", name: "chassis_rules", costMicrocents: 500 },
+    ]);
   });
 });
 
@@ -149,5 +161,41 @@ describe("authenticateAndCheckBalance with enforceBalance=false", () => {
     const db = { prepare: vi.fn().mockReturnValue({ bind }) } as unknown as D1Database;
     const res = await authenticateAndCheckBalance(db, "valid-key", 2000, false);
     expect(res.ok).toBe(true);
+  });
+});
+
+describe("recordBatchToolUsage", () => {
+  it("returns true immediately without querying D1 when calls array is empty", async () => {
+    const batch = vi.fn();
+    const db = { prepare: vi.fn(), batch } as unknown as D1Database;
+    const ok = await recordBatchToolUsage(db, "acc_1", [], 10);
+    expect(ok).toBe(true);
+    expect(batch).not.toHaveBeenCalled();
+  });
+
+  it("atomically deducts combined batch cost in a single UPDATE statement and inserts all usage rows", async () => {
+    const bind = vi.fn().mockReturnThis();
+    const prepare = vi.fn().mockReturnValue({ bind });
+    const batch = vi.fn().mockResolvedValue([
+      { meta: { changes: 1 } },
+      { meta: { changes: 1 } },
+      { meta: { changes: 1 } },
+    ]);
+    const db = { prepare, batch } as unknown as D1Database;
+
+    const ok = await recordBatchToolUsage(
+      db,
+      "acc_1",
+      [
+        { name: "chassis_rules", costMicrocents: 500 },
+        { name: "calculate_wire_gauge", costMicrocents: 500 },
+      ],
+      18.6
+    );
+    expect(ok).toBe(true);
+    expect(batch).toHaveBeenCalledTimes(1);
+    expect(bind).toHaveBeenNthCalledWith(1, 1000, "acc_1", 1000);
+    expect(bind).toHaveBeenNthCalledWith(2, "acc_1", "chassis_rules", 500, 19);
+    expect(bind).toHaveBeenNthCalledWith(3, "acc_1", "calculate_wire_gauge", 500, 19);
   });
 });

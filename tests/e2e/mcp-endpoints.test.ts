@@ -564,4 +564,95 @@ describe("E2E: Bearer API key authentication and microcent metering", () => {
     expect(batch).toHaveBeenCalledTimes(1);
     expect(bind).toHaveBeenCalledWith(500, "acc_ok", 500);
   });
+
+  it("does not charge or inflate preflight balance for id-less tools/call notifications in a batch", async () => {
+    const rawKey = "test-notification-batch-key";
+    const first = vi.fn().mockResolvedValue({ id: "acc_notif", balance_microcents: 500, is_active: 1 });
+    const bind = vi.fn().mockReturnValue({ first });
+    const batch = vi.fn().mockResolvedValue([{ meta: { changes: 1 } }, { meta: { changes: 1 } }]);
+    const db = {
+      prepare: vi.fn().mockReturnValue({ bind }),
+      batch,
+    } as unknown as D1Database;
+    const env = {
+      DB: db,
+      VECTOR_INDEX: { query: vi.fn() } as unknown as VectorizeIndex,
+      METERING_ALLOW_ALL: "false",
+    };
+
+    const req = new Request("http://localhost/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        Authorization: `Bearer ${rawKey}`,
+      },
+      body: JSON.stringify([
+        { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
+        {
+          jsonrpc: "2.0",
+          method: "tools/call",
+          params: { name: "search_van_manuals", arguments: { query: "inverter" } },
+        },
+      ]),
+    });
+
+    const res = await worker.fetch(req, env, ctx);
+    expect(res.status).toBe(200);
+    expect(batch).not.toHaveBeenCalled();
+  });
+
+  it("atomically settles a multi-call batch and returns 402 without partial charges if concurrent settlement exhausts balance", async () => {
+    const rawKey = "test-concurrent-batch-key";
+    const first = vi.fn().mockResolvedValue({ id: "acc_race", balance_microcents: 1000, is_active: 1 });
+    const bind = vi.fn().mockReturnValue({ first });
+    const batch = vi.fn().mockResolvedValue([
+      { meta: { changes: 0 } },
+      { meta: { changes: 0 } },
+      { meta: { changes: 0 } },
+    ]);
+    const db = {
+      prepare: vi.fn().mockReturnValue({ bind }),
+      batch,
+    } as unknown as D1Database;
+    const env = {
+      DB: db,
+      VECTOR_INDEX: { query: vi.fn() } as unknown as VectorizeIndex,
+      METERING_ALLOW_ALL: "false",
+    };
+
+    const req = new Request("http://localhost/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        Authorization: `Bearer ${rawKey}`,
+      },
+      body: JSON.stringify([
+        {
+          jsonrpc: "2.0",
+          id: 101,
+          method: "tools/call",
+          params: {
+            name: "chassis_rules",
+            arguments: { chassis: "ford_transit", rule_type: "electrical_tap" },
+          },
+        },
+        {
+          jsonrpc: "2.0",
+          id: 102,
+          method: "tools/call",
+          params: {
+            name: "chassis_rules",
+            arguments: { chassis: "mercedes_sprinter", rule_type: "upfitter_switches" },
+          },
+        },
+      ]),
+    });
+
+    const res = await worker.fetch(req, env, ctx);
+    expect(res.status).toBe(402);
+    expect(batch).toHaveBeenCalledTimes(1);
+    expect(bind).toHaveBeenCalledWith(1000, "acc_race", 1000);
+  });
 });

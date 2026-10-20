@@ -9,7 +9,7 @@ import {
   extractBearerToken,
   extractMeteredToolCalls,
   authenticateAndCheckBalance,
-  recordToolUsage,
+  recordBatchToolUsage,
   isAuthEnabled,
   isMeteringAllowAll,
   type MeteredToolCall,
@@ -119,7 +119,14 @@ export default {
           const matchingResp =
             respItems.find(
               (r) => r && typeof r === "object" && (r as { id?: unknown }).id === call.id
-            ) ?? (respItems.length === 1 ? respItems[0] : undefined);
+            ) ??
+            (respItems.length === 1 &&
+            meteredCalls.length === 1 &&
+            respItems[0] &&
+            typeof respItems[0] === "object" &&
+            (respItems[0] as { id?: unknown }).id === undefined
+              ? respItems[0]
+              : undefined);
           if (!matchingResp || typeof matchingResp !== "object") return false;
           const typedResp = matchingResp as {
             error?: unknown;
@@ -131,13 +138,12 @@ export default {
         // Non-JSON 200 stream: bill all metered calls
       }
 
-      const elapsedMs = Date.now() - startTime;
-      for (const call of successfulCalls) {
-        const deducted = await recordToolUsage(
+      if (successfulCalls.length > 0) {
+        const elapsedMs = Date.now() - startTime;
+        const deducted = await recordBatchToolUsage(
           env.DB,
           authenticatedAccountId,
-          call.name,
-          call.costMicrocents,
+          successfulCalls,
           elapsedMs
         );
         if (!deducted) {
