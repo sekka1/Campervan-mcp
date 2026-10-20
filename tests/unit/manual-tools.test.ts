@@ -143,5 +143,6 @@ describe("registerManualTools - lookup_vehicle_electrical_specs", () => {
     expect(parsed.keyword).toBe("CCP2");
     expect(parsed.count).toBe(1);
     expect(parsed.results[0].section_title).toBe("4.6.3 Power Connections");
+    expect(bind).toHaveBeenCalledWith("%CCP2%", "%CCP2%", 2);
   });
 });

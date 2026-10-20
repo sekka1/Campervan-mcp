@@ -206,9 +206,9 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
         const pattern = "%" + args.keyword + "%";
         const queryResult = await db
           .prepare(
-            "SELECT id, page_number, section_title, substr(chunk_text, 1, 150) AS snippet FROM document_chunks WHERE chunk_text LIKE ? OR chunk_text LIKE ? LIMIT ?"
+            "SELECT id, page_number, section_title, substr(chunk_text, 1, 150) AS snippet FROM document_chunks WHERE chunk_text LIKE ? OR section_title LIKE ? LIMIT ?"
           )
-          .bind(pattern, "%Customer Connection Point%", limit)
+          .bind(pattern, pattern, limit)
           .all<{ id: string; page_number: number; section_title: string | null; snippet: string }>();
 
         return {
