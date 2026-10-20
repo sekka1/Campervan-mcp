@@ -5,16 +5,85 @@ import { registerPayloadTools } from "./tools/payload.js";
 import { registerChassisTools } from "./tools/chassis.js";
 import { registerSpecTools } from "./tools/specs.js";
 import { registerManualTools } from "./tools/manuals.js";
+import {
+  extractBearerToken,
+  extractMeteredToolCalls,
+  authenticateAndCheckBalance,
+  recordBatchToolUsage,
+  isAuthEnabled,
+  isMeteringAllowAll,
+  type MeteredToolCall,
+} from "./utils/metering.js";
 
 export interface Env {
   DB: D1Database;
   VECTOR_INDEX: VectorizeIndex;
   AI?: Ai;
   CDN_BASE_URL?: string;
+  /**
+   * Controls whether Bearer API-key authentication is required.
+   * Currently set to "false" (disabled) in cloudflare.config.ts during testing.
+   * Set to "true" to require a valid Bearer API key on all requests.
+   */
+  AUTH_ENABLED?: string;
+  /**
+   * Controls whether microcent metering allows all requests without balance checks/deductions.
+   * Currently set to "true" (allow all) in cloudflare.config.ts.
+   * Set to "false" to enforce balance checks and per-tool microcent deductions.
+   */
+  METERING_ALLOW_ALL?: string;
 }
 
 export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+    const authEnabled = isAuthEnabled(env.AUTH_ENABLED);
+    const allowAllMetering = isMeteringAllowAll(env.METERING_ALLOW_ALL);
+    const shouldEnforceMetering = !allowAllMetering;
+
+    let meteredCalls: MeteredToolCall[] = [];
+    let authenticatedAccountId: string | undefined;
+
+    if (authEnabled || shouldEnforceMetering) {
+      if (request.method === "POST") {
+        try {
+          const cloned = await request.clone().json();
+          meteredCalls = extractMeteredToolCalls(cloned);
+        } catch {
+          // Non-JSON or malformed body will be handled by the MCP transport
+        }
+      }
+
+      const totalRequiredMicrocents = meteredCalls.reduce(
+        (sum, call) => sum + call.costMicrocents,
+        0
+      );
+
+      const authHeader = request.headers.get("Authorization");
+      const token = extractBearerToken(authHeader);
+      if (!token) {
+        return new Response(
+          JSON.stringify({ error: "Missing or invalid API key" }),
+          { status: 401, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      const authResult = await authenticateAndCheckBalance(
+        env.DB,
+        token,
+        Math.max(1, totalRequiredMicrocents),
+        shouldEnforceMetering
+      );
+      if (!authResult.ok) {
+        return new Response(
+          JSON.stringify({ error: authResult.error }),
+          { status: authResult.status, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      authenticatedAccountId = authResult.account.id;
+    }
+
+    const startTime = Date.now();
     const mcp = new McpServer({
       name: "Campervan Technical & Electrical MCP",
       version: "1.0.0",
@@ -34,6 +103,58 @@ export default {
     });
 
     await mcp.connect(transport);
-    return transport.handleRequest(request);
+    const response = await transport.handleRequest(request);
+
+    if (
+      shouldEnforceMetering &&
+      authenticatedAccountId &&
+      meteredCalls.length > 0 &&
+      response.status === 200
+    ) {
+      let successfulCalls = meteredCalls;
+      try {
+        const respBody = await response.clone().json();
+        const respItems = Array.isArray(respBody) ? respBody : [respBody];
+        successfulCalls = meteredCalls.filter((call) => {
+          const matchingResp =
+            respItems.find(
+              (r) => r && typeof r === "object" && (r as { id?: unknown }).id === call.id
+            ) ??
+            (respItems.length === 1 &&
+            meteredCalls.length === 1 &&
+            respItems[0] &&
+            typeof respItems[0] === "object" &&
+            (respItems[0] as { id?: unknown }).id === undefined
+              ? respItems[0]
+              : undefined);
+          if (!matchingResp || typeof matchingResp !== "object") return false;
+          const typedResp = matchingResp as {
+            error?: unknown;
+            result?: { isError?: boolean };
+          };
+          return !typedResp.error && typedResp.result?.isError !== true;
+        });
+      } catch {
+        // Non-JSON 200 stream: bill all metered calls
+      }
+
+      if (successfulCalls.length > 0) {
+        const elapsedMs = Date.now() - startTime;
+        const deducted = await recordBatchToolUsage(
+          env.DB,
+          authenticatedAccountId,
+          successfulCalls,
+          elapsedMs
+        );
+        if (!deducted) {
+          return new Response(
+            JSON.stringify({ error: "Insufficient account balance" }),
+            { status: 402, headers: { "Content-Type": "application/json" } }
+          );
+        }
+      }
+    }
+
+    return response;
   },
 };
