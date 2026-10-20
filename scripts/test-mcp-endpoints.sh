@@ -83,6 +83,7 @@ assert_field "tools/list returns calculate_van_payload" "${tools_response}" '.re
 assert_field "tools/list returns lookup_component_specs" "${tools_response}" '.result.tools[] | select(.name == "lookup_component_specs")'
 assert_field "tools/list returns chassis_rules" "${tools_response}" '.result.tools[] | select(.name == "chassis_rules")'
 assert_field "tools/list returns calculate_dc_wire_and_fuse" "${tools_response}" '.result.tools[] | select(.name == "calculate_dc_wire_and_fuse")'
+assert_field "tools/list returns lookup_vehicle_electrical_specs" "${tools_response}" '.result.tools[] | select(.name == "lookup_vehicle_electrical_specs")'
 
 echo
 echo "--- tools/call calculate_wire_gauge ---"
@@ -118,4 +119,10 @@ assert_field "calculate_dc_wire_and_fuse succeeds" "${abyc_response}" '.result.i
 assert_field "calculate_dc_wire_and_fuse returns fuse_type" "${abyc_response}" '(.result.content[0].text | fromjson).fuse_type == "MIDI / AMI Fuse"'
 
 echo
+echo
+echo "--- tools/call lookup_vehicle_electrical_specs ---"
+specs_lookup_response=$(json_rpc 9 tools/call '{"name":"lookup_vehicle_electrical_specs","arguments":{"query":"Ford Transit auxiliary battery tap","chassis":"ford_transit","subsystem":"12v_dc"}}')
+assert_field "lookup_vehicle_electrical_specs succeeds" "${specs_lookup_response}" '.result.isError != true'
+assert_field "lookup_vehicle_electrical_specs returns chassis" "${specs_lookup_response}" '(.result.content[0].text | fromjson).chassis == "ford_transit"'
+
 echo "All MCP endpoint tests passed against ${BASE_URL}."
