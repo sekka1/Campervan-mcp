@@ -21,17 +21,10 @@ export const DETERMINISTIC_TOOL_COST_MICROCENTS = 500;
 export const TOOL_COSTS_MICROCENTS: Record<string, number> = {
   // Hybrid RAG & D1 lookup tools ($0.002000)
   search_van_manuals: SEARCH_TOOL_COST_MICROCENTS,
-  lookup_vehicle_electrical_specs: SEARCH_TOOL_COST_MICROCENTS,
-  lookup_component_specs: SEARCH_TOOL_COST_MICROCENTS,
-  get_component_by_model: SEARCH_TOOL_COST_MICROCENTS,
+  inspect_manual_chunks: SEARCH_TOOL_COST_MICROCENTS,
 
-  // Deterministic math & OEM engineering rule tools ($0.000500)
-  calculate_wire_gauge: DETERMINISTIC_TOOL_COST_MICROCENTS,
+  // Universal Electrical Math ($0.000500)
   calculate_dc_wire_and_fuse: DETERMINISTIC_TOOL_COST_MICROCENTS,
-  validate_solar_array: DETERMINISTIC_TOOL_COST_MICROCENTS,
-  calculate_van_payload: DETERMINISTIC_TOOL_COST_MICROCENTS,
-  list_van_models: DETERMINISTIC_TOOL_COST_MICROCENTS,
-  chassis_rules: DETERMINISTIC_TOOL_COST_MICROCENTS,
 };
 
 /**

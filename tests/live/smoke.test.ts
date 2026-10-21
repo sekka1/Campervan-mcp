@@ -76,6 +76,29 @@ describe("Post-Deployment Live Smoke Test Suite", () => {
     return;
   }
 
+  it("Test 0: Verify Lean Tool Registry in tools/list", async () => {
+    console.log("-> [Test 0] Verifying tools/list exposes strictly lean RAG & math toolset...");
+    const url = `${BASE_URL}/`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 99, method: "tools/list", params: {} }),
+    });
+    expect(res.ok).toBe(true);
+    const data = await res.json();
+    const tools = (data.result?.tools || []) as Array<{ name: string }>;
+    const toolNames = tools.map((t) => t.name);
+    console.log("  Registered tools on server:", toolNames);
+
+    // Strictly assert lean toolset
+    expect(toolNames).toContain("search_van_manuals");
+    expect(toolNames).toContain("calculate_dc_wire_and_fuse");
+    expect(toolNames).not.toContain("chassis_rules");
+    expect(toolNames).not.toContain("calculate_van_payload");
+    expect(toolNames).not.toContain("lookup_component_specs");
+  });
+
+
   it("Test A: Embedding Health & Cosine Score Range", async () => {
     console.log("-> [Test A] Querying search_van_manuals for CCP1 CCP2 driver seat...");
     const { data } = await callMcpTool<{

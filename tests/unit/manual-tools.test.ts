@@ -2,8 +2,8 @@ import { describe, it, expect, vi } from "vitest";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerManualTools } from "../../src/tools/manuals";
 
-describe("registerManualTools - lookup_vehicle_electrical_specs", () => {
-  it("registers lookup_vehicle_electrical_specs and executes hybridSearch with normalized chassis", async () => {
+describe("registerManualTools - search_van_manuals", () => {
+  it("registers search_van_manuals and executes hybridSearch with normalized chassis", async () => {
     const mcp = new McpServer({ name: "test-mcp", version: "1.0.0" });
     const query = vi.fn().mockResolvedValue({
       matches: [
@@ -49,9 +49,9 @@ describe("registerManualTools - lookup_vehicle_electrical_specs", () => {
 
     // Retrieve tool handler from mcp instance
     const registeredTools = (mcp as unknown as { _registeredTools: Record<string, { handler: (...args: unknown[]) => Promise<{ content: Array<{ type: string; text: string }> }> }> })._registeredTools;
-    expect(registeredTools["lookup_vehicle_electrical_specs"]).toBeDefined();
+    expect(registeredTools["search_van_manuals"]).toBeDefined();
 
-    const toolHandler = registeredTools["lookup_vehicle_electrical_specs"].handler;
+    const toolHandler = registeredTools["search_van_manuals"].handler;
     const response = await toolHandler({
       query: "Ford Transit CCP2 alternator connection",
       chassis: "ford_transit",
@@ -84,14 +84,14 @@ describe("registerManualTools - lookup_vehicle_electrical_specs", () => {
     registerManualTools(mcp, vectorIndex);
 
     const registeredTools = (mcp as unknown as { _registeredTools: Record<string, { handler: (...args: unknown[]) => Promise<{ content: Array<{ type: string; text: string }> }> }> })._registeredTools;
-    const response = await registeredTools["lookup_vehicle_electrical_specs"].handler({
+    const response = await registeredTools["search_van_manuals"].handler({
       query: "obscure nonexistent query",
       chassis: "ram_promaster",
     });
 
     const parsed = JSON.parse(response.content[0].text);
     expect(parsed.results).toEqual([]);
-    expect(parsed.message).toBe("No authoritative specifications matched your query.");
+    expect(parsed.message).toBe("No relevant documentation found for the given query.");
   });
 
   it("fails fast with clear error message when Workers AI embedding throws", async () => {
@@ -105,7 +105,7 @@ describe("registerManualTools - lookup_vehicle_electrical_specs", () => {
     const registeredTools = (mcp as unknown as { _registeredTools: Record<string, { handler: (...args: unknown[]) => Promise<{ content: Array<{ type: string; text: string }> }> }> })._registeredTools;
 
     await expect(
-      registeredTools["lookup_vehicle_electrical_specs"].handler({
+      registeredTools["search_van_manuals"].handler({
         query: "Transit CCP2 location",
         chassis: "ford_transit",
       })
