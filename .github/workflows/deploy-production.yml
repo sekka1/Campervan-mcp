@@ -51,3 +51,7 @@ jobs:
           READY_WAIT: 60
           LIVE_DEPLOYED_TEST: "true"
         run: ./scripts/test-mcp-endpoints.sh
+      - name: Run Post-Deploy Live Smoke Test
+        env:
+          BASE_URL: https://campervan-mcp-server.garlandk.workers.dev
+        run: pnpm test:live

@@ -430,4 +430,65 @@ describe("calculateDCWireAndFuse (Spec Section 5 ABYC E-11 105°C)", () => {
       );
     }
   });
+
+  it("verifies ABYC E-11 DC wire sizing for 12V, 50A, 15ft one-way (30ft round trip) with 3% drop", () => {
+    const result = calculateDCWireAndFuse({
+      system_voltage: 12,
+      amperage: 50,
+      one_way_distance_feet: 15,
+      allowable_drop_percent: 3,
+      is_engine_compartment: false,
+    });
+    expect(result.round_trip_feet).toBe(30);
+    expect(result.exact_voltage_drop_volts).toBeLessThan(0.36);
+    expect(result.exact_voltage_drop_percent).toBeLessThan(3.0);
+    expect(result.recommended_fuse_amps).toBeGreaterThanOrEqual(70);
+    expect(result.recommended_fuse_amps).toBeLessThanOrEqual(80);
+    expect(result.fuse_type).toBe("MIDI / AMI Fuse");
+
+    const result13ft = calculateDCWireAndFuse({
+      system_voltage: 12,
+      amperage: 50,
+      one_way_distance_feet: 13,
+      allowable_drop_percent: 3,
+      is_engine_compartment: false,
+    });
+    expect(result13ft.recommended_awg).toBe("4");
+    expect(result13ft.exact_voltage_drop_volts).toBeLessThan(0.36);
+    expect(result13ft.recommended_fuse_amps).toBeGreaterThanOrEqual(70);
+    expect(result13ft.fuse_type).toBe("MIDI / AMI Fuse");
+  });
+
+  it("verifies engine compartment ampacity derating per ABYC Table VI-A (50C ambient)", () => {
+    const outside = calculateDCWireAndFuse({
+      system_voltage: 12,
+      amperage: 55,
+      one_way_distance_feet: 2,
+      allowable_drop_percent: 3,
+      is_engine_compartment: false,
+    });
+    const inside = calculateDCWireAndFuse({
+      system_voltage: 12,
+      amperage: 55,
+      one_way_distance_feet: 2,
+      allowable_drop_percent: 3,
+      is_engine_compartment: true,
+    });
+    expect(outside.recommended_awg).toBe("10");
+    expect(inside.recommended_awg).toBe("8");
+    expect(inside.wire_ampacity_amps).toBe(68);
+  });
+
+  it("throws descriptive overflow error recommending 24V or 48V when load exceeds 4/0 AWG limits", () => {
+    expect(() =>
+      calculateDCWireAndFuse({
+        system_voltage: 12,
+        amperage: 500,
+        one_way_distance_feet: 30,
+        allowable_drop_percent: 3,
+        is_engine_compartment: false,
+      })
+    ).toThrow("Exceeds 4/0 AWG limits. Consider upgrading system voltage to 24V or 48V.");
+  });
+
 });
