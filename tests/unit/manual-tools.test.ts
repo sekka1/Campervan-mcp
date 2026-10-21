@@ -200,4 +200,18 @@ describe("registerManualTools - lookup_vehicle_electrical_specs", () => {
     expect(parsed.results[0].document_title).toBe("Ford Transit BEMM 2024");
     expect(parsed.results[0].manufacturer).toBe("Ford");
   });
+
+  it("verifies search_van_manuals input schema defaults top_k to 8 when omitted", () => {
+    const mcp = new McpServer({ name: "test-mcp", version: "1.0.0" });
+    const vectorIndex = { query: vi.fn() } as unknown as VectorizeIndex;
+    registerManualTools(mcp, vectorIndex);
+
+    const registeredTools = (mcp as unknown as { _registeredTools: Record<string, { inputSchema: { shape: { top_k: { parse: (val: unknown) => number } } } }> })._registeredTools;
+    const searchTool = registeredTools["search_van_manuals"];
+    expect(searchTool).toBeDefined();
+
+    const parsed = searchTool.inputSchema.shape.top_k.parse(undefined);
+    expect(parsed).toBe(8);
+  });
+
 });
