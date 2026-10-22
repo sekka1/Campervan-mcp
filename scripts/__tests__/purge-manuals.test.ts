@@ -132,4 +132,66 @@ describe("purge-manuals", () => {
       expect(calledUrls.some((u) => u.includes("/d1/database/"))).toBe(true);
     });
   });
+    it("cleans D1 tables in strict child-to-parent foreign key order (document_chunks -> schematic_images -> documents)", async () => {
+      let executedD1Statements: Array<{ sql: string }> = [];
+      global.fetch = vi.fn(async (url: string | URL, init?: RequestInit) => {
+        const urlStr = url.toString();
+        if (urlStr.includes("/d1/database/")) {
+          const body = JSON.parse(init?.body as string);
+          if (body.batch) {
+            executedD1Statements = body.batch;
+          }
+          if (body.sql?.includes("SELECT id")) {
+            return new Response(
+              JSON.stringify({ result: [{ results: [{ id: "chunk_1" }] }] }),
+              { status: 200 }
+            );
+          }
+        }
+        return new Response("{}", { status: 200 });
+      }) as unknown as typeof fetch;
+
+      const res = await runPurge({ dryRun: false });
+      expect(res.d1Cleaned).toBe(true);
+
+      // Verify that statements were dispatched in strict foreign-key order
+      // document_chunks must be deleted first because document_chunks.schematic_image_id references schematic_images.id
+      expect(executedD1Statements).toHaveLength(3);
+      expect(executedD1Statements[0].sql).toBe("DELETE FROM document_chunks;");
+      expect(executedD1Statements[1].sql).toBe("DELETE FROM schematic_images;");
+      expect(executedD1Statements[2].sql).toBe("DELETE FROM documents;");
+    });
+
+    it("verifies foreign key order prevents SQLITE_CONSTRAINT_FOREIGNKEY failures", async () => {
+      // Simulate D1 foreign-key validation:
+      // If schematic_images is deleted while document_chunks rows still exist, D1 throws 400
+      global.fetch = vi.fn(async (url: string | URL, init?: RequestInit) => {
+        const urlStr = url.toString();
+        if (urlStr.includes("/d1/database/")) {
+          const body = JSON.parse(init?.body as string);
+          if (body.batch) {
+            const firstSql = body.batch[0]?.sql;
+            if (firstSql === "DELETE FROM schematic_images;") {
+              return new Response(
+                JSON.stringify({
+                  errors: [
+                    {
+                      code: 7500,
+                      message:
+                        "FOREIGN KEY constraint failed: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_FOREIGNKEY)",
+                    },
+                  ],
+                }),
+                { status: 400 }
+              );
+            }
+          }
+        }
+        return new Response("{}", { status: 200 });
+      }) as unknown as typeof fetch;
+
+      // When run with the correct order (document_chunks first), runPurge succeeds
+      await expect(runPurge({ dryRun: false })).resolves.toMatchObject({ d1Cleaned: true });
+    });
+
 });

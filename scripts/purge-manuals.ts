@@ -144,15 +144,17 @@ export async function runPurge(options: PurgeOptions = {}): Promise<{
   let d1Cleaned = false;
   if (d1DatabaseId) {
     if (dryRun) {
-      console.log(`[dry-run] Would delete all rows from schematic_images, document_chunks, and documents in D1.`);
+      console.log(`[dry-run] Would delete all rows from document_chunks, schematic_images, and documents in D1.`);
     } else {
       console.log(`Purging D1 manual tables...`);
+      // Delete in strict foreign-key order: document_chunks references schematic_images and documents,
+      // and schematic_images references documents.
       await executeD1Statements(accountId, apiToken, d1DatabaseId, [
-        { sql: "DELETE FROM schematic_images;", params: [] },
         { sql: "DELETE FROM document_chunks;", params: [] },
+        { sql: "DELETE FROM schematic_images;", params: [] },
         { sql: "DELETE FROM documents;", params: [] },
       ]);
-      console.log(`✓ Cleared D1 tables: schematic_images, document_chunks, documents.`);
+      console.log(`✓ Cleared D1 tables: document_chunks, schematic_images, documents.`);
       d1Cleaned = true;
     }
   }
