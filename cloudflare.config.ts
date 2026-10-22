@@ -12,7 +12,7 @@ export default defineConfig({
 		entrypoint: "src/index.ts",
 		env: {
 			ENVIRONMENT: bindings.text("production"),
-			CDN_BASE_URL: bindings.text(""),
+			CDN_BASE_URL: bindings.text("https://pub-655d7d799988450194dfe2dc6d5b1741.r2.dev"),
 			AUTH_ENABLED: bindings.text("false"),
 			METERING_ALLOW_ALL: bindings.text("true"),
 			DB: bindings.d1({
