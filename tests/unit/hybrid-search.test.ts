@@ -80,6 +80,23 @@ describe("schematic URLs", () => {
     );
   });
 
+  it("strips leading slashes from r2Key and trailing slashes from cdnBaseUrl", () => {
+    expect(
+      buildSchematicUrl(
+        "https://pub-655d7d799988450194dfe2dc6d5b1741.r2.dev///",
+        "/schematics/MY24_Transit_BEMM_V363N_20APR24_J2_V2_R2_downloaded_30JUL24_1_pdf/p146-0.png"
+      )
+    ).toBe(
+      "https://pub-655d7d799988450194dfe2dc6d5b1741.r2.dev/schematics/MY24_Transit_BEMM_V363N_20APR24_J2_V2_R2_downloaded_30JUL24_1_pdf/p146-0.png"
+    );
+  });
+
+  it("returns null when cdnBaseUrl or r2Key is empty or null", () => {
+    expect(buildSchematicUrl("", "schematics/p1.png")).toBeNull();
+    expect(buildSchematicUrl("https://pub-123.r2.dev", null)).toBeNull();
+    expect(buildSchematicUrl("https://pub-123.r2.dev", "")).toBeNull();
+  });
+
   it("returns schematic_url only when a CDN base URL is configured", async () => {
     const vec = new Array(768).fill(0.1) as number[];
     const row = {

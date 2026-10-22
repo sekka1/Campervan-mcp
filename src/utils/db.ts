@@ -244,8 +244,11 @@ export interface HybridSearchResult {
 }
 
 /** Joins the CDN base URL and an R2 key into a public image URL. */
-export function buildSchematicUrl(cdnBaseUrl: string, r2Key: string): string {
-  return `${cdnBaseUrl.replace(/\/+$/, "")}/${r2Key.split("/").map(encodeURIComponent).join("/")}`;
+export function buildSchematicUrl(cdnBaseUrl: string, r2Key: string | null): string | null {
+  if (!cdnBaseUrl || !r2Key) return null;
+  const base = cdnBaseUrl.replace(/\/+$/, "");
+  const key = r2Key.replace(/^\/+/, "");
+  return `${base}/${key.split("/").map(encodeURIComponent).join("/")}`;
 }
 
 /**
@@ -300,7 +303,7 @@ export async function hybridSearch(
       subsystem: h.subsystem,
       ...(h.schematic_r2_key ? { schematic_r2_key: h.schematic_r2_key } : {}),
       ...(h.schematic_r2_key && options.cdnBaseUrl
-        ? { schematic_url: buildSchematicUrl(options.cdnBaseUrl, h.schematic_r2_key) }
+        ? { schematic_url: buildSchematicUrl(options.cdnBaseUrl, h.schematic_r2_key) ?? undefined }
         : {}),
       ...(h.schematic_caption ? { schematic_caption: h.schematic_caption } : {}),
     };
