@@ -91,60 +91,26 @@ assert_field "initialize returns server info" "${init_response}" '.result.server
 echo
 echo "--- tools/list ---"
 tools_response=$(json_rpc 2 tools/list '{}')
-assert_field "tools/list returns calculate_wire_gauge" "${tools_response}" '.result.tools[] | select(.name == "calculate_wire_gauge")'
-assert_field "tools/list returns calculate_van_payload" "${tools_response}" '.result.tools[] | select(.name == "calculate_van_payload")'
-assert_field "tools/list returns lookup_component_specs" "${tools_response}" '.result.tools[] | select(.name == "lookup_component_specs")'
-assert_field "tools/list returns chassis_rules" "${tools_response}" '.result.tools[] | select(.name == "chassis_rules")'
 assert_field "tools/list returns calculate_dc_wire_and_fuse" "${tools_response}" '.result.tools[] | select(.name == "calculate_dc_wire_and_fuse")'
-assert_field "tools/list returns lookup_vehicle_electrical_specs" "${tools_response}" '.result.tools[] | select(.name == "lookup_vehicle_electrical_specs")'
 assert_field "tools/list returns search_van_manuals" "${tools_response}" '.result.tools[] | select(.name == "search_van_manuals")'
-
-echo
-echo "--- tools/call calculate_wire_gauge ---"
-wire_response=$(json_rpc 3 tools/call '{"name":"calculate_wire_gauge","arguments":{"current_amps":30,"length_feet":10,"voltage":"12","allowable_drop_pct":3}}')
-assert_field "calculate_wire_gauge succeeds" "${wire_response}" '.result.isError != true'
-assert_field "calculate_wire_gauge returns recommended_awg" "${wire_response}" '(.result.content[0].text | fromjson).recommended_awg'
-
-echo
-echo "--- tools/call calculate_van_payload ---"
-payload_response=$(json_rpc 4 tools/call '{"name":"calculate_van_payload","arguments":{"van_model":"sprinter_144","components":[{"name":"Test Battery","weight_lbs":58}]}}')
-assert_field "calculate_van_payload succeeds" "${payload_response}" '.result.isError != true'
-
-echo
-echo "--- tools/call list_van_models ---"
-models_response=$(json_rpc 5 tools/call '{"name":"list_van_models","arguments":{}}')
-assert_field "list_van_models succeeds" "${models_response}" '.result.isError != true'
-
-echo
-echo "--- tools/call lookup_component_specs ---"
-specs_response=$(json_rpc 6 tools/call '{"name":"lookup_component_specs","arguments":{"category":"inverter_charger"}}')
-assert_field "lookup_component_specs succeeds" "${specs_response}" '.result.isError != true'
-
-echo
-echo "--- tools/call chassis_rules ---"
-chassis_response=$(json_rpc 7 tools/call '{"name":"chassis_rules","arguments":{"chassis":"ford_transit","rule_type":"electrical_tap","proposed_tap_amps":50}}')
-assert_field "chassis_rules succeeds" "${chassis_response}" '.result.isError != true'
-assert_field "chassis_rules returns canonical_chassis" "${chassis_response}" '(.result.content[0].text | fromjson).canonical_chassis == "ford_transit"'
+assert_field "tools/list returns inspect_manual_chunks" "${tools_response}" '.result.tools[] | select(.name == "inspect_manual_chunks")'
 
 echo
 echo "--- tools/call calculate_dc_wire_and_fuse ---"
-abyc_response=$(json_rpc 8 tools/call '{"name":"calculate_dc_wire_and_fuse","arguments":{"system_voltage":12,"amperage":60,"one_way_distance_feet":15,"allowable_drop_percent":3,"is_engine_compartment":false}}')
+abyc_response=$(json_rpc 3 tools/call '{"name":"calculate_dc_wire_and_fuse","arguments":{"system_voltage":12,"amperage":60,"one_way_distance_feet":15,"allowable_drop_percent":3,"is_engine_compartment":false}}')
 assert_field "calculate_dc_wire_and_fuse succeeds" "${abyc_response}" '.result.isError != true'
 assert_field "calculate_dc_wire_and_fuse returns fuse_type" "${abyc_response}" '(.result.content[0].text | fromjson).fuse_type == "MIDI / AMI Fuse"'
 
 echo
-echo
-echo "--- tools/call lookup_vehicle_electrical_specs ---"
-specs_lookup_response=$(json_rpc 9 tools/call '{"name":"lookup_vehicle_electrical_specs","arguments":{"query":"Ford Transit auxiliary battery tap","chassis":"ford_transit","subsystem":"12v_dc"}}')
-assert_field "lookup_vehicle_electrical_specs succeeds" "${specs_lookup_response}" '.result.isError != true'
-assert_field "lookup_vehicle_electrical_specs returns chassis" "${specs_lookup_response}" '(.result.content[0].text | fromjson).chassis == "ford_transit"'
-assert_field "lookup_vehicle_electrical_specs returns results" "${specs_lookup_response}" '((.result.content[0].text | fromjson).results | length) >= 0'
-
-echo
 echo "--- tools/call search_van_manuals ---"
-manuals_response=$(json_rpc 10 tools/call '{"name":"search_van_manuals","arguments":{"query":"Transit body builder roof load rating","top_k":2}}')
+manuals_response=$(json_rpc 4 tools/call '{"name":"search_van_manuals","arguments":{"query":"Transit body builder roof load rating","top_k":2}}')
 assert_field "search_van_manuals succeeds" "${manuals_response}" '.result.isError != true'
 assert_field "search_van_manuals returns query" "${manuals_response}" '(.result.content[0].text | fromjson).query == "Transit body builder roof load rating"'
+
+echo
+echo "--- tools/call inspect_manual_chunks ---"
+inspect_response=$(json_rpc 5 tools/call '{"name":"inspect_manual_chunks","arguments":{"keyword":"CCP2","limit":2}}')
+assert_field "inspect_manual_chunks succeeds" "${inspect_response}" '.result.isError != true'
 
 # -----------------------------------------------------------------------------
 # Post-Deploy Live Server Verification (when LIVE_DEPLOYED_TEST=true)
@@ -161,10 +127,9 @@ if [[ "${LIVE_DEPLOYED_TEST}" == "true" ]]; then
   assert_field "live search_van_manuals succeeds" "${live_search_resp}" '.result.isError != true'
   assert_field "live search_van_manuals returns query" "${live_search_resp}" '(.result.content[0].text | fromjson).query == "Transit auxiliary power tap 60A continuous"'
 
-  echo "--- live lookup_vehicle_electrical_specs (live BEMM specs) ---"
-  live_specs_resp=$(json_rpc 12 tools/call '{"name":"lookup_vehicle_electrical_specs","arguments":{"query":"alternator auxiliary battery connection CCP2","chassis":"ford_transit","subsystem":"12v_dc"}}')
-  assert_field "live lookup_vehicle_electrical_specs succeeds" "${live_specs_resp}" '.result.isError != true'
-  assert_field "live lookup_vehicle_electrical_specs returns ford_transit" "${live_specs_resp}" '(.result.content[0].text | fromjson).chassis == "ford_transit"'
+  echo "--- live inspect_manual_chunks (live D1 chunks) ---"
+  live_inspect_resp=$(json_rpc 12 tools/call '{"name":"inspect_manual_chunks","arguments":{"keyword":"CCP2","limit":2}}')
+  assert_field "live inspect_manual_chunks succeeds" "${live_inspect_resp}" '.result.isError != true'
   echo "Live post-deploy MCP edge verification passed successfully!"
 fi
 

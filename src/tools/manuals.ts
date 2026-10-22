@@ -46,7 +46,7 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
     "search_van_manuals",
     {
       description:
-        "Searches the vector database of campervan documentation using semantic similarity. Retrieves relevant sections from PDF/HTML manuals including Ford Transit body builder guides, Velit heater error codes, Sprinter wiring diagrams, and Victron equipment manuals.",
+        "Searches vetted OEM vehicle manuals (Ford Transit, Mercedes Sprinter, Ram ProMaster), electrical components (Victron, EcoFlow), and upfitter standards. Returns authoritative text chunks, torque specs, part numbers, and schematic links.",
       inputSchema: {
         query: z
           .string()
@@ -112,83 +112,6 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
       };
     }
   );
-  // -------------------------------------------------------------------------
-  // Tool: lookup_vehicle_electrical_specs
-  // -------------------------------------------------------------------------
-  mcp.registerTool(
-    "lookup_vehicle_electrical_specs",
-    {
-      description:
-        "Queries vetted OEM Body and Equipment Mounting Manuals (Ford Transit BEMM, Mercedes Sprinter upfitter guide, RAM ProMaster BEG) and component technical documentation for electrical, chassis interface, and wiring specifications.",
-      inputSchema: {
-        query: z
-          .string()
-          .min(3)
-          .describe(
-            "Natural language search query or question (e.g., 'alternator charging CCP2', 'auxiliary battery tap', 'high amp connection', 'EK1 terminal 15D')"
-          ),
-        chassis: z
-          .enum(["ford_transit", "mercedes_sprinter", "ram_promaster", "universal"])
-          .describe("Target vehicle chassis for OEM-specific mounting and electrical specs"),
-        subsystem: z
-          .enum([
-            "12v_dc",
-            "48v_dc",
-            "120v_ac",
-            "chassis_interface",
-            "plumbing",
-            "heating_cooling",
-            "structural",
-          ])
-          .optional()
-          .describe("Vehicle subsystem filter (e.g., '12v_dc', 'chassis_interface')"),
-        top_k: z
-          .number()
-          .int()
-          .min(1)
-          .max(20)
-          .default(8)
-          .optional()
-          .describe("Maximum number of authoritative specification chunks to return (default 5, max 20)"),
-      },
-    },
-    async (args) => {
-      const queryVector = await generateEmbedding(args.query, ai);
-      const results = await hybridSearch(vectorIndex, db, queryVector, {
-        topK: args.top_k ?? 5,
-        chassis: args.chassis,
-        ...(args.subsystem ? { subsystem: args.subsystem } : {}),
-        ...(cdnBaseUrl ? { cdnBaseUrl } : {}),
-      });
-
-      const payload =
-        results.length === 0
-          ? {
-              results: [],
-              message: "No authoritative specifications matched your query.",
-              query: args.query,
-              chassis: args.chassis,
-            }
-          : {
-              results: results.map(({ id, source, document_title, manufacturer, ...rest }) => ({
-                chunk_id: id,
-                source: source && source !== "unknown" ? source : (document_title ?? "unknown"),
-                document_title,
-                manufacturer: manufacturer && manufacturer !== "unknown" ? manufacturer : undefined,
-                ...rest,
-              })),
-              count: results.length,
-              query: args.query,
-              chassis: args.chassis,
-            };
-
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
-      };
-    }
-  );
-
-
   // -------------------------------------------------------------------------
   // Diagnostic Tool: inspect_manual_chunks
   // -------------------------------------------------------------------------

@@ -1,100 +1,85 @@
-/**
- * tests/e2e/lifecycle-trace.test.ts
- *
- * End-to-End Query Lifecycle Trace Verification (Spec Section 7).
- *
- * Simulates the flagship multi-tool agent query:
- * "How do I wire an EcoFlow Power Kit to a 2023 Ford Transit alternator without tripping fuses?"
- *
- * Trace sequence:
- * 1. Agent invokes `lookup_vehicle_electrical_specs` to locate BEMM specifications for Ford Transit auxiliary power / CCP2.
- * 2. Agent invokes `chassis_rules` to evaluate connection constraints (CCP2 limits, M8 nut, driver seat pedestal).
- * 3. Agent invokes `calculate_dc_wire_and_fuse` to deterministically size wire gauge and overcurrent fuse for a 60A continuous load.
- * 4. Metering verifies atomic microcent deduction and usage_records insertion for all three calls.
- */
-
 import { describe, it, expect, vi } from "vitest";
 import worker from "../../src/index";
 import { hashApiKey } from "../../src/utils/metering";
 
-describe("E2E: Query Lifecycle Trace (Spec Section 7)", () => {
-  const ctx = {
-    waitUntil: vi.fn(),
-    passThroughOnException: vi.fn(),
-  } as unknown as ExecutionContext;
-
-  it("executes the full EcoFlow to Ford Transit alternator query lifecycle trace", async () => {
-    const rawApiKey = "cv_live_lifecycle_test_key_1234567890abcdef";
+describe("E2E Lifecycle Trace: Lean RAG-First Agent Workflow", () => {
+  it("executes the full lifecycle: RAG search -> wire calculation -> metering deduction", async () => {
+    const rawApiKey = "camper_live_test_key_abc123";
     const apiKeyHash = await hashApiKey(rawApiKey);
-    const initialBalance = 10000000; // $10.00 USD in microcents
+    const initialBalance = 100_000; // 100,000 microcents ($0.10)
 
-    // Mock D1 database with simulated accounts table and BEMM chunk data
     let currentBalance = initialBalance;
-    // Track usage logs if needed
-
-    const bind = vi.fn().mockImplementation((...args: unknown[]) => ({
-      first: vi.fn().mockImplementation(async () => {
-        if (args[0] === apiKeyHash) {
-          return { id: "acc_lifecycle", balance_microcents: currentBalance, is_active: 1 };
-        }
-        return null;
-      }),
-      all: vi.fn().mockImplementation(async () => {
-        // Return simulated Ford Transit BEMM chunk
-        return {
-          results: [
-            {
-              id: "ford_transit_bemm_p148_c0",
-              document_id: "doc_transit_bemm",
-              document_title: "Ford Transit Body and Equipment Mounting Manual",
-              category: "oem_bemm",
-              manufacturer: "Ford",
-              applicable_chassis: "transit",
-              page_number: 148,
-              section_title: "4.18 Auxiliary Power Connections",
-              subsystem: "12v_dc",
-              chunk_text:
-                "CCP2 (Customer Connection Point 2) located on driver seat pedestal provides 175A intermittent max, 60A continuous rating. Use M8 terminal nut.",
-              schematic_r2_key: "schematics/doc_transit_bemm/p148-0.png",
-              schematic_caption: "CCP2 Connection Point Pedestal Layout",
-            },
-          ],
-        };
-      }),
-    }));
-
-    const batch = vi.fn().mockImplementation(async (statements: unknown[]) => {
-      // Mock atomic batch settlement
-      return statements.map(() => ({ meta: { changes: 1 } }));
-    });
 
     const db = {
-      prepare: vi.fn().mockReturnValue({ bind }),
-      batch,
+      prepare: vi.fn((sql: string) => ({
+        bind: vi.fn((...params: unknown[]) => ({
+          first: vi.fn(async () => {
+            if (sql.includes("FROM accounts WHERE api_key_hash = ?")) {
+              if (params[0] === apiKeyHash) {
+                return { id: "acc_lifecycle_1", balance_microcents: currentBalance, is_active: 1 };
+              }
+              return null;
+            }
+            return null;
+          }),
+          all: vi.fn(async () => {
+            if (sql.includes("FROM document_chunks c")) {
+              return {
+                results: [
+                  {
+                    id: "doc_transit_chunk_173",
+                    document_id: "doc_transit_bemm",
+                    document_title: "Ford Transit BEMM 2024",
+                    category: "oem_bemm",
+                    manufacturer: "Ford",
+                    applicable_chassis: "transit",
+                    page_number: 145,
+                    section_title: "4.24.4 Customer Connection Points",
+                    subsystem: "12v_dc",
+                    chunk_text:
+                      "CCP2 (Customer Connection Point 2) provides 175A continuous under the driver seat pedestal with M8 stud.",
+                    schematic_r2_key: "schematics/doc_transit_bemm/p148-0.png",
+                    schematic_caption: "CCP2 Connection Layout",
+                  },
+                ],
+              };
+            }
+            return { results: [] };
+          }),
+        })),
+      })),
+      batch: vi.fn().mockImplementation(async (statements: unknown[]) => {
+        return (statements as unknown[]).map(() => ({ meta: { changes: 1 } }));
+      }),
     } as unknown as D1Database;
 
-    const mockVectorize: VectorizeIndex = {
+    const mockVectorize = {
       query: vi.fn().mockResolvedValue({
         matches: [
           {
-            id: "ford_transit_bemm_p148_c0",
-            score: 0.96,
+            id: "doc_transit_chunk_173",
+            score: 0.92,
             metadata: {
               source: "ford_transit_bemm",
-              chassis: "transit",
-              subsystem: "12v_dc",
-              text: "CCP2 auxiliary power connection 60A continuous",
+              page: 145,
+              section: "Customer Connection Points",
+              text: "CCP2 175A connection layout",
             },
           },
         ],
       }),
     } as unknown as VectorizeIndex;
 
-    const mockAi: Ai = {
+    const mockAi = {
       run: vi.fn().mockResolvedValue({
-        data: [new Array(768).fill(0.02)],
+        data: [new Array(768).fill(0.01)],
       }),
     } as unknown as Ai;
+
+    const ctx = {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+    } as unknown as ExecutionContext;
 
     const env = {
       DB: db,
@@ -106,7 +91,7 @@ describe("E2E: Query Lifecycle Trace (Spec Section 7)", () => {
     };
 
     // -------------------------------------------------------------------------
-    // Step 1: Agent calls `lookup_vehicle_electrical_specs`
+    // Step 1: Agent calls `search_van_manuals` (Universal Semantic Retrieval)
     // -------------------------------------------------------------------------
     const step1Req = new Request("http://localhost/", {
       method: "POST",
@@ -120,10 +105,10 @@ describe("E2E: Query Lifecycle Trace (Spec Section 7)", () => {
         id: 1,
         method: "tools/call",
         params: {
-          name: "lookup_vehicle_electrical_specs",
+          name: "search_van_manuals",
           arguments: {
-            query: "How do I wire an EcoFlow Power Kit to a 2023 Ford Transit alternator without tripping fuses?",
-            chassis: "ford_transit",
+            query: "How do I wire to 2024 Ford Transit CCP2 without tripping fuses?",
+            chassis: "transit",
             subsystem: "12v_dc",
           },
         },
@@ -134,7 +119,6 @@ describe("E2E: Query Lifecycle Trace (Spec Section 7)", () => {
     expect(step1Res.status).toBe(200);
     const step1Data = await step1Res.json();
     const step1Content = JSON.parse(step1Data.result.content[0].text);
-
     expect(step1Content.results[0].manufacturer).toBe("Ford");
     expect(step1Content.results[0].text).toContain("CCP2 (Customer Connection Point 2)");
     expect(step1Content.results[0].schematic_url).toBe(
@@ -142,7 +126,7 @@ describe("E2E: Query Lifecycle Trace (Spec Section 7)", () => {
     );
 
     // -------------------------------------------------------------------------
-    // Step 2: Agent calls `chassis_rules` to evaluate connection constraints
+    // Step 2: Agent calls `calculate_dc_wire_and_fuse` (Universal Electrical Math)
     // -------------------------------------------------------------------------
     const step2Req = new Request("http://localhost/", {
       method: "POST",
@@ -154,42 +138,6 @@ describe("E2E: Query Lifecycle Trace (Spec Section 7)", () => {
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 2,
-        method: "tools/call",
-        params: {
-          name: "chassis_rules",
-          arguments: {
-            chassis: "ford_transit",
-            rule_type: "electrical_tap",
-            proposed_tap_amps: 60,
-          },
-        },
-      }),
-    });
-
-    const step2Res = await worker.fetch(step2Req, env, ctx);
-    expect(step2Res.status).toBe(200);
-    const step2Data = await step2Res.json();
-    const step2Content = JSON.parse(step2Data.result.content[0].text);
-
-    expect(step2Content.is_compliant).toBe(true);
-    expect(step2Content.canonical_chassis).toBe("ford_transit");
-    expect(step2Content.oem_connection_point).toContain("CCP2");
-    expect(step2Content.guidance).toContain("CCP");
-    expect(step2Content.max_alternator_tap_amps).toBe(60);
-
-    // -------------------------------------------------------------------------
-    // Step 3: Agent calls `calculate_dc_wire_and_fuse` for 60A continuous, 15ft
-    // -------------------------------------------------------------------------
-    const step3Req = new Request("http://localhost/", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        Authorization: `Bearer ${rawApiKey}`,
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 3,
         method: "tools/call",
         params: {
           name: "calculate_dc_wire_and_fuse",
@@ -204,22 +152,19 @@ describe("E2E: Query Lifecycle Trace (Spec Section 7)", () => {
       }),
     });
 
-    const step3Res = await worker.fetch(step3Req, env, ctx);
-    expect(step3Res.status).toBe(200);
-    const step3Data = await step3Res.json();
-    const step3Content = JSON.parse(step3Data.result.content[0].text);
-
-    // ABYC E-11 deterministic calculation matches benchmark:
-    // Round-trip = 30ft, 12V 3% drop -> 4 AWG, 75A MIDI fuse
-    expect(step3Content.recommended_awg).toBe("2");
-    expect(step3Content.exact_voltage_drop_percent).toBeLessThanOrEqual(3);
-    expect(step3Content.recommended_fuse_amps).toBe(80);
-    expect(step3Content.fuse_type).toBe("MIDI / AMI Fuse");
+    const step2Res = await worker.fetch(step2Req, env, ctx);
+    expect(step2Res.status).toBe(200);
+    const step2Data = await step2Res.json();
+    const step2Content = JSON.parse(step2Data.result.content[0].text);
+    expect(step2Content.recommended_awg).toBe("2");
+    expect(step2Content.exact_voltage_drop_percent).toBeLessThanOrEqual(3);
+    expect(step2Content.recommended_fuse_amps).toBe(80);
+    expect(step2Content.fuse_type).toBe("MIDI / AMI Fuse");
 
     // -------------------------------------------------------------------------
-    // Step 4: Verify D1 metering deductions
+    // Step 3: Verify Metering Deductions
     // -------------------------------------------------------------------------
-    // 3 atomic batches were executed across the 3 tool calls
-    expect(batch).toHaveBeenCalledTimes(3);
+    // Two atomic batches were executed across the two tool calls
+    expect(db.batch).toHaveBeenCalledTimes(2);
   });
 });

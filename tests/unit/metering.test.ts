@@ -43,10 +43,10 @@ describe("hashApiKey", () => {
 describe("getToolCostMicrocents & extractMeteredToolCalls", () => {
   it("returns 2000 microcents for search/DB tools and 500 for deterministic tools", () => {
     expect(getToolCostMicrocents("search_van_manuals")).toBe(SEARCH_TOOL_COST_MICROCENTS);
-    expect(getToolCostMicrocents("lookup_component_specs")).toBe(SEARCH_TOOL_COST_MICROCENTS);
-    expect(getToolCostMicrocents("calculate_wire_gauge")).toBe(DETERMINISTIC_TOOL_COST_MICROCENTS);
+    expect(getToolCostMicrocents("inspect_manual_chunks")).toBe(SEARCH_TOOL_COST_MICROCENTS);
     expect(getToolCostMicrocents("calculate_dc_wire_and_fuse")).toBe(DETERMINISTIC_TOOL_COST_MICROCENTS);
-    expect(getToolCostMicrocents("chassis_rules")).toBe(DETERMINISTIC_TOOL_COST_MICROCENTS);
+    expect(getToolCostMicrocents("calculate_dc_wire_and_fuse")).toBe(DETERMINISTIC_TOOL_COST_MICROCENTS);
+    expect(getToolCostMicrocents("calculate_dc_wire_and_fuse")).toBe(DETERMINISTIC_TOOL_COST_MICROCENTS);
     expect(getToolCostMicrocents("unknown_tool")).toBeNull();
   });
 
@@ -55,9 +55,9 @@ describe("getToolCostMicrocents & extractMeteredToolCalls", () => {
       jsonrpc: "2.0",
       id: 1,
       method: "tools/call",
-      params: { name: "chassis_rules", arguments: {} },
+      params: { name: "calculate_dc_wire_and_fuse", arguments: {} },
     });
-    expect(single).toEqual([{ id: 1, name: "chassis_rules", costMicrocents: 500 }]);
+    expect(single).toEqual([{ id: 1, name: "calculate_dc_wire_and_fuse", costMicrocents: 500 }]);
 
     const batch = extractMeteredToolCalls([
       { jsonrpc: "2.0", id: 10, method: "tools/list", params: {} },
@@ -71,11 +71,11 @@ describe("getToolCostMicrocents & extractMeteredToolCalls", () => {
   it("excludes notification envelopes (missing or null request id) from metering", () => {
     const batchWithNotifications = extractMeteredToolCalls([
       { jsonrpc: "2.0", method: "tools/call", params: { name: "search_van_manuals" } },
-      { jsonrpc: "2.0", id: null, method: "tools/call", params: { name: "calculate_wire_gauge" } },
-      { jsonrpc: "2.0", id: "req-1", method: "tools/call", params: { name: "chassis_rules" } },
+      { jsonrpc: "2.0", id: null, method: "tools/call", params: { name: "calculate_dc_wire_and_fuse" } },
+      { jsonrpc: "2.0", id: "req-1", method: "tools/call", params: { name: "calculate_dc_wire_and_fuse" } },
     ]);
     expect(batchWithNotifications).toEqual([
-      { id: "req-1", name: "chassis_rules", costMicrocents: 500 },
+      { id: "req-1", name: "calculate_dc_wire_and_fuse", costMicrocents: 500 },
     ]);
   });
 });
@@ -120,11 +120,11 @@ describe("recordToolUsage", () => {
     const batch = vi.fn().mockResolvedValue([{ meta: { changes: 1 } }, { meta: { changes: 1 } }]);
     const db = { prepare, batch } as unknown as D1Database;
 
-    const ok = await recordToolUsage(db, "acc_1", "chassis_rules", 500, 12.4);
+    const ok = await recordToolUsage(db, "acc_1", "calculate_dc_wire_and_fuse", 500, 12.4);
     expect(ok).toBe(true);
     expect(batch).toHaveBeenCalledTimes(1);
     expect(bind).toHaveBeenNthCalledWith(1, 500, "acc_1", 500);
-    expect(bind).toHaveBeenNthCalledWith(2, "acc_1", "chassis_rules", 500, 12);
+    expect(bind).toHaveBeenNthCalledWith(2, "acc_1", "calculate_dc_wire_and_fuse", 500, 12);
   });
 
   it("returns false when conditional UPDATE affected 0 rows (concurrent balance exhaustion)", async () => {
@@ -187,15 +187,15 @@ describe("recordBatchToolUsage", () => {
       db,
       "acc_1",
       [
-        { name: "chassis_rules", costMicrocents: 500 },
-        { name: "calculate_wire_gauge", costMicrocents: 500 },
+        { name: "calculate_dc_wire_and_fuse", costMicrocents: 500 },
+        { name: "calculate_dc_wire_and_fuse", costMicrocents: 500 },
       ],
       18.6
     );
     expect(ok).toBe(true);
     expect(batch).toHaveBeenCalledTimes(1);
     expect(bind).toHaveBeenNthCalledWith(1, 1000, "acc_1", 1000);
-    expect(bind).toHaveBeenNthCalledWith(2, "acc_1", "chassis_rules", 500, 19);
-    expect(bind).toHaveBeenNthCalledWith(3, "acc_1", "calculate_wire_gauge", 500, 19);
+    expect(bind).toHaveBeenNthCalledWith(2, "acc_1", "calculate_dc_wire_and_fuse", 500, 19);
+    expect(bind).toHaveBeenNthCalledWith(3, "acc_1", "calculate_dc_wire_and_fuse", 500, 19);
   });
 });

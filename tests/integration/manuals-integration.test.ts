@@ -87,12 +87,7 @@ describe("Integration: Manual Tools & Ingestion Verification", () => {
         })
       ).rejects.toThrow("Failed to generate text embedding via Workers AI (@cf/baai/bge-base-en-v1.5)");
 
-      await expect(
-        registeredTools["lookup_vehicle_electrical_specs"].handler({
-          query: "Ford Transit auxiliary battery tap",
-          chassis: "ford_transit",
-        })
-      ).rejects.toThrow("Failed to generate text embedding via Workers AI (@cf/baai/bge-base-en-v1.5)");
+
     });
   });
 
