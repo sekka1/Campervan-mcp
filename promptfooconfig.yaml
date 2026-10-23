@@ -1,55 +1,55 @@
 # promptfooconfig.yaml
 description: "Campervan-mcp Live Endpoint Evaluation via DeepInfra"
 
-# Candidate models under test on DeepInfra
+# Define the live MCP server once
+mcpConfig: &mcp
+  mcp:
+    servers:
+      - name: campervan
+        url: "https://campervan-mcp-server.garlandk.workers.dev/"
+
 providers:
   - id: "openai:chat:deepseek-ai/DeepSeek-V4-Flash-0731"
     label: "DeepSeek V4 Flash 0731"
     config:
+      <<: *mcp
       apiBaseUrl: "https://api.deepinfra.com/v1/openai"
       apiKeyEnvar: "DEEPINFRA_TOKEN"
 
   - id: "openai:chat:meta-llama/Llama-4-Scout-17B-16E-Instruct"
     label: "Llama 4 Scout 17B (16E)"
     config:
+      <<: *mcp
       apiBaseUrl: "https://api.deepinfra.com/v1/openai"
       apiKeyEnvar: "DEEPINFRA_TOKEN"
 
   - id: "openai:chat:google/gemma-3-27b-it"
     label: "Gemma 3 27B IT"
     config:
+      <<: *mcp
       apiBaseUrl: "https://api.deepinfra.com/v1/openai"
       apiKeyEnvar: "DEEPINFRA_TOKEN"
 
   - id: "openai:chat:google/gemma-3-4b-it"
     label: "Gemma 3 4B IT"
     config:
+      <<: *mcp
       apiBaseUrl: "https://api.deepinfra.com/v1/openai"
       apiKeyEnvar: "DEEPINFRA_TOKEN"
 
-# Evaluator Judge & Live Remote MCP Endpoint
 defaultTest:
   options:
-    # Dedicated Judge on DeepInfra for grading
+    # Dedicated Judge on DeepInfra
     provider:
       id: "openai:chat:anthropic/claude-sonnet-4-6"
       config:
         apiBaseUrl: "https://api.deepinfra.com/v1/openai"
         apiKeyEnvar: "DEEPINFRA_TOKEN"
 
-    # Connect directly to your live Cloudflare Worker
-    config:
-      mcp:
-        servers:
-          - name: campervan
-            url: "https://campervan-mcp-server.garlandk.workers.dev/"
-
 prompts:
   - "{{question}}"
 
-# Tests targeting the two live tools: calculate_dc_wire_and_fuse & search_van_manuals
 tests:
-  # Test 1: Sizing calculation tool (calculate_dc_wire_and_fuse)
   - vars:
       question: "Calculate the recommended wire gauge and fuse size for a 12V 2000W inverter with a 10ft round-trip run."
     assert:
@@ -58,7 +58,6 @@ tests:
       - type: latency
         threshold: 8000
 
-  # Test 2: Ingested manuals search (search_van_manuals)
   - vars:
       question: "What are the mounting torque specs and cut-out dimensions for installing a MaxxFan Deluxe on a campervan roof?"
     assert:
