@@ -14,15 +14,7 @@ providers:
       <<: *mcp
       apiBaseUrl: "https://api.deepinfra.com/v1/openai"
       apiKeyEnvar: "DEEPINFRA_TOKEN"
-
-  # Top Pick: 78% cheaper input ($0.08 / $0.28)
-  - id: "openai:chat:Qwen/Qwen3-32B"
-    label: "Qwen3 32B ($0.08/in)"
-    config:
-      <<: *mcp
-      apiBaseUrl: "https://api.deepinfra.com/v1/openai"
-      apiKeyEnvar: "DEEPINFRA_TOKEN"
-
+      
   # Runner-Up: Latest 3.6 MoE architecture ($0.10/in)
   - id: "openai:chat:Qwen/Qwen3.6-35B-A3B"
     label: "Qwen3.6 35B MoE ($0.10/in)"
