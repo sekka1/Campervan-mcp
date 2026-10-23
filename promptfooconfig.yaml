@@ -1,7 +1,7 @@
 # promptfooconfig.yaml
-description: "Campervan-mcp Model Evaluation Suite via DeepInfra"
+description: "Campervan-mcp Live Endpoint Evaluation via DeepInfra"
 
-# The 4 candidate models to test
+# Candidate models under test on DeepInfra
 providers:
   - id: "openai:chat:deepseek-ai/DeepSeek-V4-Flash-0731"
     label: "DeepSeek V4 Flash 0731"
@@ -27,40 +27,42 @@ providers:
       apiBaseUrl: "https://api.deepinfra.com/v1/openai"
       apiKeyEnvar: "DEEPINFRA_TOKEN"
 
-# Evaluator Judge & Local Cloudflare Worker MCP Endpoint
+# Evaluator Judge & Live Remote MCP Endpoint
 defaultTest:
   options:
-    # Dedicated Judge for model-graded assertions (llm-rubric)
+    # Dedicated Judge on DeepInfra for grading
     provider:
       id: "openai:chat:anthropic/claude-sonnet-4-6"
       config:
         apiBaseUrl: "https://api.deepinfra.com/v1/openai"
         apiKeyEnvar: "DEEPINFRA_TOKEN"
 
-    # Connect all candidate models to the running local Cloudflare Worker
+    # Connect directly to your live Cloudflare Worker
     config:
       mcp:
         servers:
-          - name: campervan-mcp
-            url: "http://localhost:8787" # or "http://localhost:8787/sse"
+          - name: campervan
+            url: "https://campervan-mcp-server.garlandk.workers.dev/"
 
 prompts:
   - "{{question}}"
 
-# Evaluation Test Suite
+# Tests targeting the two live tools: calculate_dc_wire_and_fuse & search_van_manuals
 tests:
+  # Test 1: Sizing calculation tool (calculate_dc_wire_and_fuse)
   - vars:
       question: "Calculate the recommended wire gauge and fuse size for a 12V 2000W inverter with a 10ft round-trip run."
     assert:
       - type: llm-rubric
-        value: "Accurately calculates continuous current (~167A at 12V), accounts for inverter surge or efficiency margins, recommends at least 2/0 AWG copper wire and a 250A-300A fuse (such as Class T or MRBF), and references safe voltage drop limits (<3%)."
+        value: "Invokes the calculate_dc_wire_and_fuse tool, calculates continuous current (~167A at 12V), recommends at least 2/0 AWG copper wire and a 250A-300A fuse, and references safe voltage drop limits (<3%)."
       - type: latency
-        threshold: 6000
+        threshold: 8000
 
+  # Test 2: Ingested manuals search (search_van_manuals)
   - vars:
-      question: "What is the maximum payload capacity remaining if I add 400Ah LiFePO4 batteries and 60 gallons of fresh water to a stock Ford Transit 250 AWD?"
+      question: "What are the mounting torque specs and cut-out dimensions for installing a MaxxFan Deluxe on a campervan roof?"
     assert:
       - type: llm-rubric
-        value: "Correctly calculates the weight of water (~500 lbs at 8.34 lbs/gallon) and batteries (~100-120 lbs), references base payload specs for a Ford Transit 250 AWD (~3,600 to 4,100 lbs depending on trim), and accurately deducts the combined added load (~600-620 lbs) to report the remaining usable payload."
+        value: "Invokes the search_van_manuals tool and accurately cites standard 14x14 inch roof cut-out dimensions and manufacturer mounting torque guidelines."
       - type: latency
-        threshold: 6000
+        threshold: 8000
