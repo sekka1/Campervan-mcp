@@ -20,7 +20,14 @@ jobs:
 
       - name: Run Promptfoo Benchmark against Live Server
         run: |
-          promptfoo eval -c promptfooconfig.yaml --max-concurrency 2
+          promptfoo eval -c promptfooconfig.yaml -o report.html --max-concurrency 2
         env:
           DEEPINFRA_TOKEN: ${{ secrets.DEEPINFRA_TOKEN }}
           PROMPTFOO_FAILED_TEST_EXIT_CODE: 0
+
+      - name: Upload HTML Benchmark Report
+        if: always() # Uploads even if assertions fail
+        uses: actions/upload-artifact@v4
+        with:
+          name: campervan-model-benchmark-report
+          path: report.html
