@@ -1,6 +1,5 @@
 name: Model Benchmark Evals (Manual)
 
-# Runs ONLY when manually triggered via the Actions tab or GitHub CLI
 on:
   workflow_dispatch:
 
@@ -10,16 +9,16 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-        
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
-      - name: Install Python MCP Dependencies
+      - name: Install Dependencies
         run: |
-          pip install -r requirements.txt
-          pip install -e .
+          npm ci
 
       - name: Run Promptfoo Evaluation
         run: |
