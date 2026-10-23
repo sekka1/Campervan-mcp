@@ -20,7 +20,7 @@ jobs:
 
       - name: Run Promptfoo Benchmark against Live Server
         run: |
-          promptfoo eval -c promptfooconfig.yaml
+          promptfoo eval -c promptfooconfig.yaml --max-concurrency 2
         env:
           DEEPINFRA_TOKEN: ${{ secrets.DEEPINFRA_TOKEN }}
           PROMPTFOO_FAILED_TEST_EXIT_CODE: 0
