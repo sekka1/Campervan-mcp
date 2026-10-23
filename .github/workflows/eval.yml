@@ -1,0 +1,34 @@
+name: Model Benchmark Evals (Manual)
+
+# Runs ONLY when manually triggered via the Actions tab or GitHub CLI
+on:
+  workflow_dispatch:
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Python MCP Dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Run Promptfoo Evaluation
+        run: |
+          npx promptfoo@latest eval -c promptfooconfig.yaml
+        env:
+          DEEPINFRA_TOKEN: ${{ secrets.DEEPINFRA_TOKEN }}
