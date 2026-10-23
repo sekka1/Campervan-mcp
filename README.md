@@ -4,6 +4,32 @@ A production-grade [Model Context Protocol (MCP)](https://modelcontextprotocol.i
 
 It gives AI assistants (Claude, etc.) tool access to deterministic electrical calculations, payload/weight capacity checks, a component specs database (Cloudflare D1), and semantic search over van build manuals and documentation (Cloudflare Vectorize).
 
+## Connecting to the Live Server
+
+You can connect directly to the live production MCP server from Claude Desktop, Cursor, or any MCP-compatible client using the configuration below:
+
+```json
+{
+  "mcpServers": {
+    "campervan": {
+      "url": "https://campervan-mcp-server.garlandk.workers.dev/",
+      "transport": "streamable-http"
+    }
+  }
+}
+```
+
+### Quick Test via cURL
+
+Verify connectivity and inspect available tools:
+
+```bash
+curl -X POST https://campervan-mcp-server.garlandk.workers.dev/ \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}'
+```
+
 ## Features
 
 - **Deterministic calculations** — All electrical, wire sizing, and weight math is implemented in pure TypeScript (`src/utils/formulas.ts`), never left to LLM guesswork.
@@ -15,30 +41,22 @@ It gives AI assistants (Claude, etc.) tool access to deterministic electrical ca
 
 | Tool | Description | Cost (Microcents) |
 | --- | --- | --- |
-| `lookup_vehicle_electrical_specs` | Queries vetted OEM Body and Equipment Mounting Manuals (Ford Transit, Sprinter, ProMaster) and component documentation by chassis and subsystem. | 2,000 ($0.002) |
-| `search_van_manuals` | Searches the vector database of campervan documentation using semantic similarity (wiring diagrams, error codes, body builder guides, equipment manuals). | 2,000 ($0.002) |
-| `calculate_dc_wire_and_fuse` | Deterministic ABYC E-11 DC wire gauge (AWG 16 to 4/0), engine compartment derating, exact voltage drop %, and fuse sizing (ATC/MIDI/MRBF/Class T). | 500 ($0.0005) |
-| `calculate_wire_gauge` | Calculates recommended AWG wire size, conductor resistance, voltage drop percentage, and fuse sizing for DC circuits. | 500 ($0.0005) |
-| `chassis_rules` | Deterministic OEM body builder rules for high-current tapping (Transit CCP2, Sprinter EK1/F55, ProMaster battery tap), upfitter switches, and roof/chassis mounting. | 500 ($0.0005) |
-| `validate_solar_array` | Validates solar panel string configuration (series/parallel) against MPPT charge controller specifications with cold-weather Voc safety margins. | 500 ($0.0005) |
-| `calculate_van_payload` | Calculates total component weight against vehicle GVWR for Sprinter, Transit, and Promaster vans with estimated axle distribution. | 500 ($0.0005) |
-| `list_van_models` | Lists all supported van models with their GVWR, curb weight, maximum payload, and axle ratings. | 500 ($0.0005) |
-| `lookup_component_specs` | Queries the D1 database for component specifications including terminal stud sizes, max continuous amp ratings, dimensions, and idle power draw. | 2,000 ($0.002) |
-| `get_component_by_model` | Retrieves exact specifications for a component by its model number from the D1 database. | 2,000 ($0.002) |
+| `search_van_manuals` | Searches vetted OEM vehicle manuals (Ford Transit, Mercedes Sprinter, Ram ProMaster), electrical components (Victron, Renogy, REDARC), and upfitter standards. Returns authoritative text chunks, torque specs, part numbers, and verbatim schematic diagram links. | 2,000 ($0.002) |
+| `calculate_dc_wire_and_fuse` | Deterministic ABYC E-11 DC cable gauge (AWG 16 to 4/0), 105°C engine compartment derating, exact voltage drop %, and fuse form factor sizing (ATC, MIDI, MEGA, MRBF, Class T). | 500 ($0.0005) |
+| `inspect_manual_chunks` | Diagnostic endpoint for inspecting raw ingested manual chunks in Cloudflare D1 using SQL text pattern matching. | 2,000 ($0.002) |
 
 ## Architecture
 
 ```
 src/
-├── index.ts            # Worker entrypoint — wires up McpServer + HTTP transport
+├── index.ts            # Worker entrypoint — wires up McpServer + Streamable HTTP transport
 ├── tools/
-│   ├── electrical.ts    # Wire gauge & solar array validation tools
-│   ├── payload.ts       # Van payload/weight capacity tools
-│   ├── specs.ts         # D1-backed component spec lookup tools
-│   └── manuals.ts       # Vectorize-backed semantic manual search tool
+│   ├── electrical.ts    # calculate_dc_wire_and_fuse (Universal Electrical Math)
+│   └── manuals.ts       # search_van_manuals (Universal Semantic Retrieval) & inspect_manual_chunks
 └── utils/
-    ├── formulas.ts      # Pure TypeScript electrical/weight calculation helpers
-    └── db.ts            # D1 database helpers
+    ├── formulas.ts      # Pure TypeScript electrical math (ABYC E-11 tables, voltage drop, fuses)
+    ├── db.ts            # D1 database & Vectorize hybrid search helpers
+    └── metering.ts      # API key authentication & fractional microcent metering
 
 d1/
 ├── migrations/          # Sequential, non-destructive D1 schema migrations
