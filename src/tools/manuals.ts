@@ -46,7 +46,7 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
     "search_van_manuals",
     {
       description:
-        "Searches vetted OEM vehicle manuals (Ford Transit, Mercedes Sprinter, Ram ProMaster), electrical components (Victron, Renogy, REDARC), and upfitter standards. Returns authoritative text chunks, torque specs, OEM retrofit kit part numbers, wiring guidelines, and schematic links. Use to find official OEM retrofit parts when high-current connection points (like CCP2) are not factory-fitted on base/single-battery trims.",
+        "Searches vetted OEM vehicle manuals (Ford Transit, Mercedes Sprinter, Ram ProMaster), electrical components (Victron, Renogy, REDARC), and upfitter standards. Returns authoritative text chunks, torque specs, part numbers, and schematic links. CRITICAL: When referencing diagrams in your response, you MUST use the exact 'schematic_markdown' or 'schematic_url' string verbatim without altering the character casing, as Cloudflare R2 object storage keys are strictly case-sensitive.",
       inputSchema: {
         query: z
           .string()

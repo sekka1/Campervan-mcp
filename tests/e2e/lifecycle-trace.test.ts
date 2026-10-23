@@ -124,6 +124,9 @@ describe("E2E Lifecycle Trace: Lean RAG-First Agent Workflow", () => {
     expect(step1Content.results[0].schematic_url).toBe(
       "https://assets.campervan.dev/schematics/doc_transit_bemm/p148-0.png"
     );
+    expect(step1Content.results[0].schematic_markdown).toBe(
+      "[CCP2 Connection Layout](https://assets.campervan.dev/schematics/doc_transit_bemm/p148-0.png)"
+    );
 
     // -------------------------------------------------------------------------
     // Step 2: Agent calls `calculate_dc_wire_and_fuse` (Universal Electrical Math)
