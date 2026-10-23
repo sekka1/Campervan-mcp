@@ -1,6 +1,12 @@
 # promptfooconfig.yaml
 description: "Campervan-mcp Live Endpoint Evaluation via DeepInfra"
 
+prompts:
+  - |
+    You are a campervan build assistant. You have access to specialized tools. Always use your available tools to perform calculations and look up manufacturer manuals before answering.
+
+    User Question: {{question}}
+
 mcpConfig: &mcp
   mcp:
     enabled: true
@@ -14,7 +20,7 @@ providers:
       <<: *mcp
       apiBaseUrl: "https://api.deepinfra.com/v1/openai"
       apiKeyEnvar: "DEEPINFRA_TOKEN"
-      
+
   # Runner-Up: Latest 3.6 MoE architecture ($0.10/in)
   - id: "openai:chat:Qwen/Qwen3.6-35B-A3B"
     label: "Qwen3.6 35B MoE ($0.10/in)"
