@@ -33,7 +33,8 @@ import { basename, resolve } from "node:path";
 import { extractImages, extractText, getDocumentProxy } from "unpdf";
 import {
   deriveSectionTitle,
-  prepareSchematics,
+  isSchematicCandidate,
+  renderCompositeSchematic,
   type EncodedSchematic,
   type SchematicImage,
 } from "./schematics";
@@ -778,7 +779,19 @@ export async function extractSchematics(
   for (let page = 1; page <= pdf.numPages; page++) {
     try {
       const raw = await extractImages(pdf, page);
-      schematics.push(...prepareSchematics(documentId, title, page, raw, sectionByPage.get(page)));
+      const candidates = raw.filter(isSchematicCandidate);
+      if (candidates.length > 0) {
+        // Page contains an embedded schematic/diagram: render the full composite page
+        // so that vector paths, callout numbers (e.g. 49-88), lines, and legends are preserved
+        const composite = await renderCompositeSchematic(
+          pdf,
+          documentId,
+          title,
+          page,
+          sectionByPage.get(page)
+        );
+        schematics.push(composite);
+      }
     } catch (err) {
       console.warn(`Skipping images on page ${page} of "${title}": ${err instanceof Error ? err.message : err}`);
     }

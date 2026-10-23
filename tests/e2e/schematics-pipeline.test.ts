@@ -128,9 +128,11 @@ describe("ingest-manuals schematic images E2E pipeline", () => {
     expect(uploads[0].headers["authorization"]).toBe("Bearer test-token");
     expect(uploads[0].headers["content-type"]).toBe("image/png");
     expect(uploads[0].body.subarray(0, 8).equals(PNG_MAGIC)).toBe(true);
-    // IHDR width/height (bytes 16..24) must match the 120x120 source image.
-    expect(uploads[0].body.readUInt32BE(16)).toBe(120);
-    expect(uploads[0].body.readUInt32BE(20)).toBe(120);
+    // IHDR width/height (bytes 16..24) matches the rendered 150-200 DPI composite page (1224x1584).
+    const renderedWidth = uploads[0].body.readUInt32BE(16);
+    const renderedHeight = uploads[0].body.readUInt32BE(20);
+    expect(renderedWidth).toBe(1224);
+    expect(renderedHeight).toBe(1584);
 
     // The image must be uploaded before the D1 rows that reference it are written.
     const uploadIndex = mock.requests.indexOf(uploads[0]);
@@ -157,8 +159,8 @@ describe("ingest-manuals schematic images E2E pipeline", () => {
       "Schematic Manual - page 1: 4.2 BATTERY WIRING",
       EXPECTED_R2_KEY,
       "image/png",
-      120,
-      120,
+      1224,
+      1584,
     ]);
 
     // Chunk rows carry the derived section title and link to the page's image.

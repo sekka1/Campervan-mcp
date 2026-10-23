@@ -6,6 +6,8 @@
  */
 
 import { deflateSync } from "node:zlib";
+import { renderPageAsImage, type getDocumentProxy } from "unpdf";
+
 
 /** Images smaller than this (in either dimension) are icons/bullets/rules, not schematics. */
 export const MIN_SCHEMATIC_DIMENSION = 100;
@@ -157,4 +159,45 @@ export function deriveSectionTitle(pageText: string): string | null {
     if (NUMBERED_HEADING_RE.test(line) || isAllCaps) return line;
   }
   return null;
+}
+
+export interface CompositeRenderOptions {
+  scale?: number;
+}
+
+/**
+ * Renders a full composite PDF page (including vector callouts, lines, numbers, and legends)
+ * to a high-resolution PNG image for schematic diagrams.
+ */
+export async function renderCompositeSchematic(
+  pdf: Awaited<ReturnType<typeof getDocumentProxy>>,
+  documentId: string,
+  title: string,
+  pageNumber: number,
+  sectionTitle?: string | null,
+  options: CompositeRenderOptions = {}
+): Promise<EncodedSchematic> {
+  const scale = options.scale ?? 2.0; // 150-200 DPI
+  const pngArrayBuffer = await renderPageAsImage(pdf, pageNumber, {
+    canvasImport: () => import("@napi-rs/canvas"),
+    scale,
+  });
+  const bytes = new Uint8Array(pngArrayBuffer);
+  const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const width = buf.readUInt32BE(16);
+  const height = buf.readUInt32BE(20);
+
+  return {
+    image: {
+      id: buildSchematicImageId(documentId, pageNumber, 0),
+      documentId,
+      pageNumber,
+      caption: buildSchematicCaption(title, pageNumber, sectionTitle),
+      r2Key: buildSchematicR2Key(documentId, pageNumber, 0),
+      mimeType: "image/png",
+      width,
+      height,
+    },
+    bytes,
+  };
 }

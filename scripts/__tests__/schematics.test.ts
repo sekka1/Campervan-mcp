@@ -1,3 +1,7 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { getDocumentProxy } from "unpdf";
+import { renderCompositeSchematic } from "../schematics";
 import { inflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import {
@@ -71,5 +75,21 @@ describe("deriveSectionTitle", () => {
   it("returns null when nothing looks like a heading", () => {
     expect(deriveSectionTitle("just a plain sentence with no heading at all")).toBeNull();
     expect(deriveSectionTitle("")).toBeNull();
+  });
+});
+
+describe("renderCompositeSchematic", () => {
+  it("renders a composite PDF page to a valid PNG with vector and text layers intact", async () => {
+    const fixturePath = resolve(__dirname, "../../tests/fixtures/schematic-manual.pdf");
+    const buffer = readFileSync(fixturePath);
+    const pdf = await getDocumentProxy(new Uint8Array(buffer));
+    const result = await renderCompositeSchematic(pdf, "doc_test", "Test Manual", 1, "4.2 Battery Wiring");
+    expect(result.image.id).toBe("doc_test_p1_img0");
+    expect(result.image.r2Key).toBe("schematics/doc_test/p1-0.png");
+    expect(result.image.caption).toBe("Test Manual - page 1: 4.2 Battery Wiring");
+    expect(result.image.mimeType).toBe("image/png");
+    expect(result.image.width).toBe(1224);
+    expect(result.image.height).toBe(1584);
+    expect(result.bytes.subarray(0, 8)).toEqual(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   });
 });
