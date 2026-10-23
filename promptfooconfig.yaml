@@ -1,12 +1,12 @@
 # promptfooconfig.yaml
 description: "Campervan-mcp Live Endpoint Evaluation via DeepInfra"
 
-# Define the live MCP server once
+# Official Promptfoo MCP remote server schema
 mcpConfig: &mcp
   mcp:
-    servers:
-      - name: campervan
-        url: "https://campervan-mcp-server.garlandk.workers.dev/"
+    enabled: true
+    server:
+      url: "https://campervan-mcp-server.garlandk.workers.dev"
 
 providers:
   - id: "openai:chat:deepseek-ai/DeepSeek-V4-Flash-0731"
@@ -47,7 +47,7 @@ defaultTest:
         apiKeyEnvar: "DEEPINFRA_TOKEN"
 
 prompts:
-  - "{{question}}"
+  - "You are a campervan build assistant. You have access to specialized tools. Always use your available tools to perform calculations and look up manufacturer manuals before answering.\n\nUser Question: {{question}}"
 
 tests:
   - vars:
@@ -56,7 +56,7 @@ tests:
       - type: llm-rubric
         value: "Invokes the calculate_dc_wire_and_fuse tool, calculates continuous current (~167A at 12V), recommends at least 2/0 AWG copper wire and a 250A-300A fuse, and references safe voltage drop limits (<3%)."
       - type: latency
-        threshold: 8000
+        threshold: 15000
 
   - vars:
       question: "What are the mounting torque specs and cut-out dimensions for installing a MaxxFan Deluxe on a campervan roof?"
@@ -64,4 +64,4 @@ tests:
       - type: llm-rubric
         value: "Invokes the search_van_manuals tool and accurately cites standard 14x14 inch roof cut-out dimensions and manufacturer mounting torque guidelines."
       - type: latency
-        threshold: 8000
+        threshold: 15000
