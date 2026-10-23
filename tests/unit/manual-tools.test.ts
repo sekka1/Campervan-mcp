@@ -76,6 +76,7 @@ describe("registerManualTools - search_van_manuals", () => {
     expect(parsed.results[0].chunk_id).toBe("doc_1_chunk_0");
     expect(parsed.results[0].manufacturer).toBe("Ford");
     expect(parsed.results[0].schematic_url).toBe("https://cdn.example.com/schematics/doc_1/p148-0.png");
+    expect(parsed.results[0].schematic_markdown).toBe("[CCP2 Location](https://cdn.example.com/schematics/doc_1/p148-0.png)");
   });
 
   it("returns graceful empty payload when no matches found", async () => {

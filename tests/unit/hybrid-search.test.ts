@@ -107,7 +107,15 @@ describe("schematic URLs", () => {
     const match = { id: "a", score: 0.9, metadata: { source: "s", text: "m" } };
     const withCdn = await hybridSearch(makeIndex([match]).index, makeDb([row]).db, vec, { cdnBaseUrl: "https://cdn.test" });
     expect(withCdn[0]?.schematic_url).toBe("https://cdn.test/schematics/d/p4-0.png");
+    expect(withCdn[0]?.schematic_markdown).toBe("[Cap](https://cdn.test/schematics/d/p4-0.png)");
+
+    // Test fallback when caption is null/empty
+    const rowNoCap = { ...row, schematic_caption: null };
+    const withCdnNoCap = await hybridSearch(makeIndex([match]).index, makeDb([rowNoCap]).db, vec, { cdnBaseUrl: "https://cdn.test" });
+    expect(withCdnNoCap[0]?.schematic_markdown).toBe("[View OEM Diagram](https://cdn.test/schematics/d/p4-0.png)");
+
     const without = await hybridSearch(makeIndex([match]).index, makeDb([row]).db, vec);
     expect(without[0]?.schematic_url).toBeUndefined();
+    expect(without[0]?.schematic_markdown).toBeUndefined();
   });
 });

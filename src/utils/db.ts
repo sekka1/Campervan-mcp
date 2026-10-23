@@ -241,6 +241,7 @@ export interface HybridSearchResult {
   schematic_r2_key?: string;
   schematic_url?: string;
   schematic_caption?: string;
+  schematic_markdown?: string;
 }
 
 /** Joins the CDN base URL and an R2 key into a public image URL. */
@@ -303,7 +304,14 @@ export async function hybridSearch(
       subsystem: h.subsystem,
       ...(h.schematic_r2_key ? { schematic_r2_key: h.schematic_r2_key } : {}),
       ...(h.schematic_r2_key && options.cdnBaseUrl
-        ? { schematic_url: buildSchematicUrl(options.cdnBaseUrl, h.schematic_r2_key) ?? undefined }
+        ? (() => {
+            const url = buildSchematicUrl(options.cdnBaseUrl, h.schematic_r2_key);
+            if (!url) return {};
+            return {
+              schematic_url: url,
+              schematic_markdown: `[${h.schematic_caption || "View OEM Diagram"}](${url})`,
+            };
+          })()
         : {}),
       ...(h.schematic_caption ? { schematic_caption: h.schematic_caption } : {}),
     };

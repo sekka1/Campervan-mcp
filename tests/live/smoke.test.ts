@@ -114,6 +114,7 @@ describe("Post-Deployment Live Smoke Test Suite", () => {
         schematic_url?: string;
         schematic_caption?: string;
         schematic_r2_key?: string;
+        schematic_markdown?: string;
       }>;
     }>("search_van_manuals", {
       query: "Customer Connection Points CCP1 CCP2 driver seat",
@@ -133,6 +134,8 @@ describe("Post-Deployment Live Smoke Test Suite", () => {
       if (r.schematic_url) {
         console.log(`    -> Diagram: ${r.schematic_url}`);
         expect(r.schematic_url).toMatch(/^https:\/\/pub-[a-zA-Z0-9]+\.r2\.dev\/schematics\/.+/);
+        expect(r.schematic_markdown).toBeDefined();
+        expect(r.schematic_markdown).toContain(`](${r.schematic_url})`);
       }
     }
   });
