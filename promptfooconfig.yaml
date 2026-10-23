@@ -15,22 +15,17 @@ providers:
       apiBaseUrl: "https://api.deepinfra.com/v1/openai"
       apiKeyEnvar: "DEEPINFRA_TOKEN"
 
-  - id: "openai:chat:Qwen/Qwen2.5-72B-Instruct"
-    label: "Qwen 2.5 72B Instruct"
+  # Top Pick: 78% cheaper input ($0.08 / $0.28)
+  - id: "openai:chat:Qwen/Qwen3-32B"
+    label: "Qwen3 32B ($0.08/in)"
     config:
       <<: *mcp
       apiBaseUrl: "https://api.deepinfra.com/v1/openai"
       apiKeyEnvar: "DEEPINFRA_TOKEN"
 
-  - id: "openai:chat:google/gemma-3-27b-it"
-    label: "Gemma 3 27B IT"
-    config:
-      <<: *mcp
-      apiBaseUrl: "https://api.deepinfra.com/v1/openai"
-      apiKeyEnvar: "DEEPINFRA_TOKEN"
-
-  - id: "openai:chat:google/gemma-3-4b-it"
-    label: "Gemma 3 4B IT"
+  # Runner-Up: Latest 3.6 MoE architecture ($0.10/in)
+  - id: "openai:chat:Qwen/Qwen3.6-35B-A3B"
+    label: "Qwen3.6 35B MoE ($0.10/in)"
     config:
       <<: *mcp
       apiBaseUrl: "https://api.deepinfra.com/v1/openai"
@@ -48,7 +43,6 @@ prompts:
   - "You are a campervan build assistant. You have access to specialized tools. Always use your available tools to perform calculations and look up manufacturer manuals before answering.\n\nUser Question: {{question}}"
 
 tests:
-  # Test 1: Sizing calculation tool
   - vars:
       question: "Calculate the recommended wire gauge and fuse size for a 12V 2000W inverter with a 10ft round-trip run."
     assert:
@@ -57,7 +51,6 @@ tests:
       - type: llm-rubric
         value: "Successfully calls the calculate_dc_wire_and_fuse tool and receives a valid result containing recommended_awg, voltage drop, and recommended fuse size."
 
-  # Test 2: Ingested manuals search
   - vars:
       question: "What are the mounting torque specs and cut-out dimensions for installing a MaxxFan Deluxe on a campervan roof?"
     assert:
