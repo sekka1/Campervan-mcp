@@ -1,0 +1,69 @@
+# promptfooconfig.yaml
+description: "Campervan-mcp Model Evaluation Suite via DeepInfra"
+
+# The 4 candidate models to benchmark
+providers:
+  - id: "openai:chat:deepseek-ai/DeepSeek-V4-Flash-0731"
+    label: "DeepSeek V4 Flash 0731"
+    config:
+      apiBaseUrl: "https://api.deepinfra.com/v1/openai"
+      apiKeyEnvar: "DEEPINFRA_TOKEN"
+
+  - id: "openai:chat:meta-llama/Llama-4-Scout-17B-16E-Instruct"
+    label: "Llama 4 Scout 17B (16E)"
+    config:
+      apiBaseUrl: "https://api.deepinfra.com/v1/openai"
+      apiKeyEnvar: "DEEPINFRA_TOKEN"
+
+  - id: "openai:chat:google/gemma-3-27b-it"
+    label: "Gemma 3 27B IT"
+    config:
+      apiBaseUrl: "https://api.deepinfra.com/v1/openai"
+      apiKeyEnvar: "DEEPINFRA_TOKEN"
+
+  - id: "openai:chat:google/gemma-3-4b-it"
+    label: "Gemma 3 4B IT"
+    config:
+      apiBaseUrl: "https://api.deepinfra.com/v1/openai"
+      apiKeyEnvar: "DEEPINFRA_TOKEN"
+
+# Evaluator & MCP Configuration
+defaultTest:
+  options:
+    # Use Claude Sonnet 4.6 on DeepInfra as the automated grading judge
+    provider:
+      id: "openai:chat:anthropic/claude-sonnet-4-6"
+      config:
+        apiBaseUrl: "https://api.deepinfra.com/v1/openai"
+        apiKeyEnvar: "DEEPINFRA_TOKEN"
+
+    # MCP server under test
+    providerConfig:
+      mcp:
+        servers:
+          - name: campervan-mcp
+            command: python3
+            args: ["-m", "campervan_mcp.server"]
+
+prompts:
+  - "{{question}}"
+
+# Two real evaluation questions
+tests:
+  # Question 1: DC electrical calculation & sizing
+  - vars:
+      question: "Calculate the recommended wire gauge and fuse size for a 12V 2000W inverter with a 10ft round-trip run."
+    assert:
+      - type: llm-rubric
+        value: "Accurately calculates continuous current (~167A at 12V), accounts for inverter surge or efficiency margins, recommends at least 2/0 AWG copper wire and a 250A-300A fuse (such as Class T or MRBF), and references safe voltage drop limits (<3%)."
+      - type: latency
+        threshold: 5000
+
+  # Question 2: Vehicle specs & payload deduction
+  - vars:
+      question: "What is the maximum payload capacity remaining if I add 400Ah LiFePO4 batteries and 60 gallons of fresh water to a stock Ford Transit 250 AWD?"
+    assert:
+      - type: llm-rubric
+        value: "Correctly calculates the weight of water (~500 lbs at 8.34 lbs/gallon) and batteries (~100-120 lbs), references base payload specs for a Ford Transit 250 AWD (typically ~3,600 to 4,100 lbs depending on wheelbase/roof), and accurately deducts the combined added load (~600-620 lbs) to report the remaining usable payload."
+      - type: latency
+        threshold: 5000
