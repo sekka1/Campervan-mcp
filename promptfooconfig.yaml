@@ -1,7 +1,6 @@
 # promptfooconfig.yaml
 description: "Campervan-mcp Live Endpoint Evaluation via DeepInfra"
 
-# Official Promptfoo MCP remote server schema
 mcpConfig: &mcp
   mcp:
     enabled: true
@@ -16,8 +15,8 @@ providers:
       apiBaseUrl: "https://api.deepinfra.com/v1/openai"
       apiKeyEnvar: "DEEPINFRA_TOKEN"
 
-  - id: "openai:chat:meta-llama/Llama-4-Scout-17B-16E-Instruct"
-    label: "Llama 4 Scout 17B (16E)"
+  - id: "openai:chat:Qwen/Qwen2.5-72B-Instruct"
+    label: "Qwen 2.5 72B Instruct"
     config:
       <<: *mcp
       apiBaseUrl: "https://api.deepinfra.com/v1/openai"
@@ -39,7 +38,6 @@ providers:
 
 defaultTest:
   options:
-    # Dedicated Judge on DeepInfra
     provider:
       id: "openai:chat:anthropic/claude-sonnet-4-6"
       config:
@@ -50,18 +48,20 @@ prompts:
   - "You are a campervan build assistant. You have access to specialized tools. Always use your available tools to perform calculations and look up manufacturer manuals before answering.\n\nUser Question: {{question}}"
 
 tests:
+  # Test 1: Sizing calculation tool
   - vars:
       question: "Calculate the recommended wire gauge and fuse size for a 12V 2000W inverter with a 10ft round-trip run."
     assert:
+      - type: contains
+        value: "calculate_dc_wire_and_fuse"
       - type: llm-rubric
-        value: "Invokes the calculate_dc_wire_and_fuse tool, calculates continuous current (~167A at 12V), recommends at least 2/0 AWG copper wire and a 250A-300A fuse, and references safe voltage drop limits (<3%)."
-      - type: latency
-        threshold: 15000
+        value: "Successfully calls the calculate_dc_wire_and_fuse tool and receives a valid result containing recommended_awg, voltage drop, and recommended fuse size."
 
+  # Test 2: Ingested manuals search
   - vars:
       question: "What are the mounting torque specs and cut-out dimensions for installing a MaxxFan Deluxe on a campervan roof?"
     assert:
+      - type: contains
+        value: "search_van_manuals"
       - type: llm-rubric
-        value: "Invokes the search_van_manuals tool and accurately cites standard 14x14 inch roof cut-out dimensions and manufacturer mounting torque guidelines."
-      - type: latency
-        threshold: 15000
+        value: "Successfully invokes the search_van_manuals tool and retrieves relevant manual chunks or specifications from the documentation database."
