@@ -10,17 +10,30 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: 20
+          cache: 'pnpm'
 
       - name: Install Dependencies
-        run: |
-          npm ci
+        run: pnpm install --frozen-lockfile
 
-      - name: Run Promptfoo Evaluation
+      - name: Apply Local D1 Database Migrations
+        run: |
+          npx cf d1 migrations apply 2aa73cfb-cf41-4ab3-b614-b0cf1eb7ec0c --dir d1/migrations --local
+
+      - name: Start Campervan MCP Worker in Background
+        run: |
+          pnpm dev &
+          npx wait-on -t 30000 http://localhost:8787
+
+      - name: Run Promptfoo Benchmark via DeepInfra
         run: |
           npx promptfoo@latest eval -c promptfooconfig.yaml
         env:
