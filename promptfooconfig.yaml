@@ -31,10 +31,8 @@ defaultTest:
         apiBaseUrl: "https://api.deepinfra.com/v1/openai"
         apiKeyEnvar: "DEEPINFRA_TOKEN"
 
-prompts:
-  - "You are a campervan build assistant. You have access to specialized tools. Always use your available tools to perform calculations and look up manufacturer manuals before answering.\n\nUser Question: {{question}}"
-
 tests:
+  # Test 1: Sizing calculation tool (calculate_dc_wire_and_fuse)
   - vars:
       question: "Calculate the recommended wire gauge and fuse size for a 12V 2000W inverter with a 10ft round-trip run."
     assert:
@@ -42,7 +40,10 @@ tests:
         value: "calculate_dc_wire_and_fuse"
       - type: llm-rubric
         value: "Successfully calls the calculate_dc_wire_and_fuse tool and receives a valid result containing recommended_awg, voltage drop, and recommended fuse size."
+      - type: latency
+        threshold: 12000
 
+  # Test 2: Roof aperture & fan search (search_van_manuals)
   - vars:
       question: "What are the mounting torque specs and cut-out dimensions for installing a MaxxFan Deluxe on a campervan roof?"
     assert:
@@ -50,3 +51,27 @@ tests:
         value: "search_van_manuals"
       - type: llm-rubric
         value: "Successfully invokes the search_van_manuals tool and retrieves relevant manual chunks or specifications from the documentation database."
+      - type: latency
+        threshold: 12000
+
+  # Test 3: Customer Connection Points (search_van_manuals)
+  - vars:
+      question: "Where are the Customer Connection Points (CCP1 and CCP2) located in a Ford Transit, and what are their current ratings?"
+    assert:
+      - type: contains
+        value: "search_van_manuals"
+      - type: llm-rubric
+        value: "Invokes search_van_manuals, correctly identifies the location as the driver's seat pedestal (or driver's seat base), and accurately states the ratings: CCP1 is 60A and CCP2 is 175A."
+      - type: latency
+        threshold: 12000
+
+  # Test 4: Chassis grounding & BMS rules (search_van_manuals)
+  - vars:
+      question: "Where are the approved chassis grounding points located in a Ford Transit for auxiliary electrical systems, and what are the rules regarding connecting to the battery negative terminal?"
+    assert:
+      - type: contains
+        value: "search_van_manuals"
+      - type: llm-rubric
+        value: "Invokes search_van_manuals, identifies approved Ford Transit ground locations (such as the driver's seat pedestal/base ground stud or pillar ground points), and warns that auxiliary negatives must connect to designated chassis ground studs rather than bypassing the Battery Monitoring Sensor (BMS) on the negative terminal."
+      - type: latency
+        threshold: 12000
