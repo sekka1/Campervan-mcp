@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   classifyWithDeepInfra,
   DEFAULT_UNIVERSAL_METADATA,
+  extractCoverPageText,
   extractDocumentMetadata,
+  METADATA_AI_MAX_PAGES,
+  METADATA_AI_MAX_CHARS,
   parseExtraTokens,
   parseFilenameMetadata,
 } from "../../scripts/metadata";
@@ -179,5 +182,21 @@ describe("Combined Two-Tier Extraction", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(meta.category).toBe("climate");
     expect(meta.manufacturer).toBe("velit");
+  });
+});
+describe("extractCoverPageText helper", () => {
+  it("extracts up to METADATA_AI_MAX_PAGES (default 10) and caps at METADATA_AI_MAX_CHARS (default 25000)", () => {
+    expect(METADATA_AI_MAX_PAGES).toBe(10);
+    expect(METADATA_AI_MAX_CHARS).toBe(25000);
+    const pages = Array.from({ length: 15 }, (_, i) => `Page ${i + 1} content repeating `.repeat(100));
+    const extracted = extractCoverPageText(pages);
+    expect(extracted).toContain("Page 1 content");
+    expect(extracted).toContain("Page 10 content");
+    expect(extracted).not.toContain("Page 11 content");
+    expect(extracted.length).toBeLessThanOrEqual(METADATA_AI_MAX_CHARS);
+
+    // Test character cap
+    const hugePage = "A".repeat(30000);
+    expect(extractCoverPageText([hugePage]).length).toBe(METADATA_AI_MAX_CHARS);
   });
 });

@@ -28,7 +28,7 @@ This system operates on a fundamental division of responsibilities:
      - 1 Flexible JSON Pouch: `metadata_json` (e.g. `{"year_start": 2020, "year_end": 2024, "chassis_code": "V363N", "voltage": 12, "fuel": "diesel"}`).
    - **Two-Tier Ingestion Classification**:
      - *Tier 1 (Fast Path)*: Deterministic filename regex `{category}_{manufacturer}_{model}_{market}_{extra}.pdf`.
-     - *Tier 2 (AI Fallback)*: DeepInfra OpenAI-compatible chat completions API using model `deepseek-ai/DeepSeek-V4-Flash-0731` against Pages 1–2 plain text when filenames are non-conforming.
+     - *Tier 2 (AI Fallback)*: DeepInfra OpenAI-compatible chat completions API using model `deepseek-ai/DeepSeek-V4-Flash-0731` against introductory plain text (up to 10 pages, capped at 25,000 characters) when filenames are non-conforming.
    - **Anti-Pattern Prohibition**:
      - ❌ **NEVER** create component-specific or vehicle-specific tables (e.g., `chassis_specs`, `heater_specs`, `transit_rules`).
      - ❌ **NEVER** create vehicle-specific tools or hardcoded constants in TypeScript.

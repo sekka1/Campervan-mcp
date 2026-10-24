@@ -205,7 +205,7 @@ Files named according to `{category}_{manufacturer}_{model}_{market}_{extra}.pdf
 - `climate_espar_airtronic-s2_global_diesel-12v.pdf` → Category: `climate`, Manufacturer: `espar`, Model: `airtronic-s2`, Market: `global`, `fuel: diesel`, `voltage: 12`
 
 #### AI Cover-Page Pass (Tier 2 Fallback)
-For non-conforming filenames (e.g., `MY24_Transit_BEMM_V363N_20APR24_J2_V2_R2.pdf`), the pipeline extracts plain text from Pages 1 and 2 and classifies the document using DeepInfra (`deepseek-ai/DeepSeek-V4-Flash-0731`).
+For non-conforming filenames (e.g., `MY24_Transit_BEMM_V363N_20APR24_J2_V2_R2.pdf`), the pipeline extracts plain text from up to the first 10 pages (capped at 25,000 characters) and classifies the document using DeepInfra (`deepseek-ai/DeepSeek-V4-Flash-0731`).
 > **Secret Requirement**: Set `DEEPINFRA_TOKEN` in repository secrets to enable automatic DeepInfra cover-page classification during GitHub Actions ingestion.
 
 ### Automated PDF Manual Ingestion (GitOps)

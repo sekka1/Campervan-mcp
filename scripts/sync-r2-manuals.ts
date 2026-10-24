@@ -43,7 +43,7 @@ import {
   type _Object,
 } from "@aws-sdk/client-s3";
 import { extractText, getDocumentProxy } from "unpdf";
-import { extractDocumentMetadata } from "./metadata";
+import { extractCoverPageText, extractDocumentMetadata } from "./metadata";
 import {
   batchArray,
   buildChunksFromPages,
@@ -311,7 +311,7 @@ export async function processAddedModifiedR2Object(
     const buffer = readFileSync(tempPath);
     const pdf = await getDocumentProxy(new Uint8Array(buffer), { verbosity: PDF_PARSE_VERBOSITY });
     const { text } = await extractText(pdf, { mergePages: false });
-    coverPageText = Array.isArray(text) ? text.slice(0, 2).join("\n") : (typeof text === "string" ? text : "");
+    coverPageText = extractCoverPageText(text);
     chunks = buildR2ManualChunks(key, text);
     if (d1DatabaseId) {
       schematics = await extractSchematics(pdf, sanitizeR2Key(key), deriveManualTitleFromKey(key), chunks);

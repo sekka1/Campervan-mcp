@@ -133,10 +133,17 @@ export function parseFilenameMetadata(filePathOrName: string): UniversalMetadata
   };
 }
 
+/**
+ * Configuration constants for Tier 2 AI Cover-Page Pass:
+ * Easily configurable page count and character cap.
+ */
+export const METADATA_AI_MAX_PAGES = 10;
+export const METADATA_AI_MAX_CHARS = 25000;
+
 export const DEEPINFRA_API_URL = "https://api.deepinfra.com/v1/openai/chat/completions";
 export const DEEPINFRA_MODEL = "deepseek-ai/DeepSeek-V4-Flash-0731";
 
-export const CLASSIFICATION_PROMPT = `You are a technical document classifier. Analyze the first two pages of this equipment manual and extract metadata into valid JSON with this exact schema:
+export const CLASSIFICATION_PROMPT = `You are a technical document classifier. Analyze the introductory text (up to ${METADATA_AI_MAX_PAGES} pages) of this equipment manual and extract metadata into valid JSON with this exact schema:
 {
   "category": "chassis" | "climate" | "power" | "plumbing" | "other",
   "manufacturer": string (lowercase, e.g. "ford", "mercedes", "espar", "victron"),
@@ -152,8 +159,22 @@ export const CLASSIFICATION_PROMPT = `You are a technical document classifier. A
 }`;
 
 /**
+ * Extracts introductory text from pages up to METADATA_AI_MAX_PAGES and caps at METADATA_AI_MAX_CHARS.
+ */
+export function extractCoverPageText(
+  text: string | string[],
+  maxPages: number = METADATA_AI_MAX_PAGES,
+  maxChars: number = METADATA_AI_MAX_CHARS
+): string {
+  const combined = Array.isArray(text)
+    ? text.slice(0, maxPages).join("\n")
+    : (typeof text === "string" ? text : "");
+  return combined.slice(0, maxChars);
+}
+
+/**
  * Tier 2: AI Cover-Page Pass via DeepInfra.
- * Analyzes the plain text of Pages 1 & 2 of the PDF.
+ * Analyzes the plain text of up to METADATA_AI_MAX_PAGES (capped at METADATA_AI_MAX_CHARS) of the PDF.
  */
 export async function classifyWithDeepInfra(
   coverPageText: string,
@@ -172,7 +193,7 @@ export async function classifyWithDeepInfra(
   }
 
   try {
-    const truncatedText = coverPageText.slice(0, 8000);
+    const truncatedText = coverPageText.slice(0, METADATA_AI_MAX_CHARS);
     const response = await customFetch(DEEPINFRA_API_URL, {
       method: "POST",
       headers: {
@@ -185,7 +206,7 @@ export async function classifyWithDeepInfra(
           { role: "system", content: CLASSIFICATION_PROMPT },
           {
             role: "user",
-            content: `Document Text (First 2 Pages):\n${truncatedText}\n\nRespond with valid JSON only.`,
+            content: `Document Text (First ${METADATA_AI_MAX_PAGES} Pages):\n${truncatedText}\n\nRespond with valid JSON only.`,
           },
         ],
         response_format: { type: "json_object" },

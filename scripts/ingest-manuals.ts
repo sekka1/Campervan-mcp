@@ -39,6 +39,7 @@ import {
   type SchematicImage,
 } from "./schematics";
 import {
+  extractCoverPageText,
   extractDocumentMetadata,
   type UniversalMetadata,
 } from "./metadata";
@@ -954,7 +955,7 @@ export async function processAddedModifiedFile(
     }
   }
 
-  const coverPageText = Array.isArray(text) ? text.slice(0, 2).join("\n") : (typeof text === "string" ? text : "");
+  const coverPageText = extractCoverPageText(text);
   const metadata = await extractDocumentMetadata(filePath, coverPageText);
 
   if (d1DatabaseId) {
