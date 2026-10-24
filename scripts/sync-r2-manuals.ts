@@ -43,6 +43,7 @@ import {
   type _Object,
 } from "@aws-sdk/client-s3";
 import { extractText, getDocumentProxy } from "unpdf";
+import { extractDocumentMetadata } from "./metadata";
 import {
   batchArray,
   buildChunksFromPages,
@@ -305,10 +306,12 @@ export async function processAddedModifiedR2Object(
 
   let chunks: ManualChunk[];
   let schematics: EncodedSchematic[] = [];
+  let coverPageText = "";
   try {
     const buffer = readFileSync(tempPath);
     const pdf = await getDocumentProxy(new Uint8Array(buffer), { verbosity: PDF_PARSE_VERBOSITY });
     const { text } = await extractText(pdf, { mergePages: false });
+    coverPageText = Array.isArray(text) ? text.slice(0, 2).join("\n") : (typeof text === "string" ? text : "");
     chunks = buildR2ManualChunks(key, text);
     if (d1DatabaseId) {
       schematics = await extractSchematics(pdf, sanitizeR2Key(key), deriveManualTitleFromKey(key), chunks);
@@ -349,7 +352,8 @@ export async function processAddedModifiedR2Object(
         new PutObjectCommand({ Bucket: bucket, Key: schematicKey, Body: bytes, ContentType: contentType })
       );
     });
-    const doc = buildDocumentRecord(sanitizeR2Key(key), deriveManualTitleFromKey(key), key, key);
+    const metadata = await extractDocumentMetadata(key, coverPageText);
+    const doc = buildDocumentRecord(sanitizeR2Key(key), deriveManualTitleFromKey(key), key, key, metadata);
     await executeD1Statements(
       accountId,
       apiToken,

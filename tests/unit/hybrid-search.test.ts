@@ -118,4 +118,134 @@ describe("schematic URLs", () => {
     expect(without[0]?.schematic_url).toBeUndefined();
     expect(without[0]?.schematic_markdown).toBeUndefined();
   });
+
+describe("universal metadata filtering in hydrateChunks and hybridSearch", () => {
+  const vec = new Array(768).fill(0.1) as number[];
+
+  it("applies category, manufacturer, model, market, and model_year SQL filters in hydrateChunks", async () => {
+    const { db, prepare, bind } = makeDb([]);
+    await hydrateChunks(db, ["chunk_1"], {
+      category: "chassis",
+      manufacturer: "ford",
+      model: "transit",
+      market: "us",
+      model_year: 2024,
+    });
+
+    expect(prepare).toHaveBeenCalledTimes(1);
+    const sql = prepare.mock.calls[0][0] as string;
+    expect(sql).toContain("c.id IN (?)");
+    expect(sql).toContain("LOWER(COALESCE(c.category, d.category, '')) = ?");
+    expect(sql).toContain("LOWER(COALESCE(c.manufacturer, d.manufacturer, '')) = ?");
+    expect(sql).toContain("LOWER(COALESCE(c.model, d.model, '')) = ?");
+    expect(sql).toContain("LOWER(COALESCE(c.market, d.market, 'global')) IN (?, 'global')");
+    expect(sql).toContain("json_extract(COALESCE(c.metadata_json, d.metadata_json), '$.year_start')");
+
+    expect(bind).toHaveBeenCalledWith("chunk_1", "chassis", "ford", "transit", "us", 2024, 2024);
+  });
+
+  it("excludes chunks tagged with market: eu when querying market: us", async () => {
+    const matchUs = { id: "chunk_us", score: 0.9, metadata: { source: "ford", text: "US spec" } };
+    const matchEu = { id: "chunk_eu", score: 0.85, metadata: { source: "ford", text: "EU spec" } };
+    const { index } = makeIndex([matchUs, matchEu]);
+
+    // DB only returns the hydrated chunk that satisfies market = us (or global)
+    const { db } = makeDb([
+      {
+        id: "chunk_us",
+        document_id: "doc_1",
+        document_title: "Ford Transit US",
+        category: "chassis",
+        manufacturer: "ford",
+        model: "transit",
+        market: "us",
+        applicable_chassis: "transit",
+        page_number: 1,
+        section_title: null,
+        subsystem: "chassis_interface",
+        chunk_text: "US spec Transit",
+        schematic_r2_key: null,
+        schematic_caption: null,
+      },
+    ]);
+
+    const results = await hybridSearch(index, db, vec, { market: "us" });
+    expect(results).toHaveLength(1);
+    expect(results[0]?.id).toBe("chunk_us");
+    expect(results[0]?.market).toBe("us");
+  });
+
+  it("matches model_year: 2024 when metadata_json spans 2020-2024 and excludes 2015-2019", async () => {
+    const match2024 = { id: "chunk_2024", score: 0.95, metadata: { source: "ford", text: "2024 spec" } };
+    const match2018 = { id: "chunk_2018", score: 0.88, metadata: { source: "ford", text: "2018 spec" } };
+    const { index } = makeIndex([match2024, match2018]);
+
+    const { db } = makeDb([
+      {
+        id: "chunk_2024",
+        document_id: "doc_2",
+        document_title: "Transit 2020-2024",
+        category: "chassis",
+        manufacturer: "ford",
+        model: "transit",
+        market: "us",
+        metadata_json: JSON.stringify({ year_start: 2020, year_end: 2024 }),
+        applicable_chassis: "transit",
+        page_number: 10,
+        section_title: "CCP2",
+        subsystem: "12v_dc",
+        chunk_text: "2020-2024 Transit CCP2 wiring",
+        schematic_r2_key: null,
+        schematic_caption: null,
+      },
+    ]);
+
+    const results = await hybridSearch(index, db, vec, { model_year: 2024 });
+    expect(results).toHaveLength(1);
+    expect(results[0]?.id).toBe("chunk_2024");
+    expect(results[0]?.metadata_json).toContain("2020");
+  });
+
+  it("returns top-k matches across all categories when no filters are supplied", async () => {
+    const match1 = { id: "c1", score: 0.95, metadata: { source: "ford", text: "transit" } };
+    const match2 = { id: "c2", score: 0.90, metadata: { source: "victron", text: "inverter" } };
+    const { index } = makeIndex([match1, match2]);
+
+    const { db } = makeDb([
+      {
+        id: "c1",
+        document_id: "d1",
+        document_title: "Transit",
+        category: "chassis",
+        manufacturer: "ford",
+        applicable_chassis: "transit",
+        page_number: 1,
+        section_title: null,
+        subsystem: "chassis_interface",
+        chunk_text: "Transit chassis",
+        schematic_r2_key: null,
+        schematic_caption: null,
+      },
+      {
+        id: "c2",
+        document_id: "d2",
+        document_title: "MultiPlus",
+        category: "power",
+        manufacturer: "victron",
+        applicable_chassis: "universal",
+        page_number: 2,
+        section_title: null,
+        subsystem: "12v_dc",
+        chunk_text: "MultiPlus inverter",
+        schematic_r2_key: null,
+        schematic_caption: null,
+      },
+    ]);
+
+    const results = await hybridSearch(index, db, vec);
+    expect(results).toHaveLength(2);
+    expect(results.map((r) => r.id)).toEqual(["c1", "c2"]);
+  });
+});
+
 });

@@ -111,6 +111,9 @@ describe("D1 statements", () => {
       manufacturer: "transit",
       applicableChassis: "transit",
       rawR2Path: "transit/bemm.pdf",
+      model: "unknown",
+      market: "global",
+      metadata_json: "{}",
     });
   });
 
@@ -130,6 +133,11 @@ describe("D1 statements", () => {
       7,
       Math.ceil(7 * 1.3),
       null,
+      "oem_bemm",
+      "transit",
+      "unknown",
+      "global",
+      "{}",
     ]);
   });
 
@@ -148,7 +156,7 @@ describe("D1 statements", () => {
     expect(statements[3].sql).toContain("INSERT INTO schematic_images");
     expect(statements[3].params).toEqual([image.id, "transit_bemm_pdf", 1, "Bemm - page 1", image.r2Key, "image/png", 200, 150]);
     expect(statements[4].sql).toContain("INSERT INTO document_chunks");
-    expect(statements[4].params.at(-1)).toBe(image.id);
+    expect(statements[4].params[8]).toBe(image.id);
   });
 
   it("stores the detected section title on chunks", () => {

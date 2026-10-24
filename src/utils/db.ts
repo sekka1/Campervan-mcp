@@ -200,28 +200,80 @@ export interface HydratedChunk {
   chunk_text: string;
   schematic_r2_key: string | null;
   schematic_caption: string | null;
+  model?: string | null;
+  market?: string | null;
+  metadata_json?: string | null;
+}
+
+export interface HydrateFilterOptions {
+  category?: string;
+  manufacturer?: string;
+  model?: string;
+  market?: "us" | "eu" | "global";
+  model_year?: number;
 }
 
 /**
  * Fetch full chunk text and provenance from D1 for the given chunk IDs
  * (the IDs returned by the Vectorize kNN query).
  */
-export async function hydrateChunks(db: D1Database, ids: string[]): Promise<Map<string, HydratedChunk>> {
+export async function hydrateChunks(
+  db: D1Database,
+  ids: string[],
+  filters: HydrateFilterOptions = {}
+): Promise<Map<string, HydratedChunk>> {
   const map = new Map<string, HydratedChunk>();
   if (ids.length === 0) return map;
+
   const placeholders = ids.map(() => "?").join(", ");
-  const { results } = await db
-    .prepare(
-      `SELECT c.id, c.document_id, d.title AS document_title, d.category, d.manufacturer,
+  const conditions: string[] = [`c.id IN (${placeholders})`];
+  const params: unknown[] = [...ids];
+
+  if (filters.category) {
+    conditions.push(`LOWER(COALESCE(c.category, d.category, '')) = ?`);
+    params.push(filters.category.toLowerCase().trim());
+  }
+
+  if (filters.manufacturer) {
+    conditions.push(`LOWER(COALESCE(c.manufacturer, d.manufacturer, '')) = ?`);
+    params.push(filters.manufacturer.toLowerCase().trim());
+  }
+
+  if (filters.model) {
+    conditions.push(`LOWER(COALESCE(c.model, d.model, '')) = ?`);
+    params.push(filters.model.toLowerCase().trim());
+  }
+
+  if (filters.market) {
+    conditions.push(`LOWER(COALESCE(c.market, d.market, 'global')) IN (?, 'global')`);
+    params.push(filters.market.toLowerCase().trim());
+  }
+
+  if (filters.model_year !== undefined) {
+    conditions.push(
+      `(COALESCE(c.metadata_json, d.metadata_json) IS NULL OR COALESCE(c.metadata_json, d.metadata_json) = '{}' OR (CAST(json_extract(COALESCE(c.metadata_json, d.metadata_json), '$.year_start') AS INTEGER) <= ? AND CAST(json_extract(COALESCE(c.metadata_json, d.metadata_json), '$.year_end') AS INTEGER) >= ?))`
+    );
+    params.push(filters.model_year, filters.model_year);
+  }
+
+  const query = `SELECT c.id, c.document_id, d.title AS document_title,
+              COALESCE(c.category, d.category) AS category,
+              COALESCE(c.manufacturer, d.manufacturer) AS manufacturer,
               d.applicable_chassis, c.page_number, c.section_title, c.subsystem, c.chunk_text,
-              s.r2_key AS schematic_r2_key, s.caption AS schematic_caption
+              s.r2_key AS schematic_r2_key, s.caption AS schematic_caption,
+              COALESCE(c.model, d.model) AS model,
+              COALESCE(c.market, d.market) AS market,
+              COALESCE(c.metadata_json, d.metadata_json) AS metadata_json
        FROM document_chunks c
        JOIN documents d ON d.id = c.document_id
        LEFT JOIN schematic_images s ON s.id = c.schematic_image_id
-       WHERE c.id IN (${placeholders})`
-    )
-    .bind(...ids)
+       WHERE ${conditions.join(" AND ")}`;
+
+  const { results } = await db
+    .prepare(query)
+    .bind(...params)
     .all<HydratedChunk>();
+
   for (const row of results ?? []) map.set(row.id, row);
   return map;
 }
@@ -242,6 +294,9 @@ export interface HybridSearchResult {
   schematic_url?: string;
   schematic_caption?: string;
   schematic_markdown?: string;
+  model?: string;
+  market?: string;
+  metadata_json?: string;
 }
 
 /** Joins the CDN base URL and an R2 key into a public image URL. */
@@ -261,7 +316,18 @@ export async function hybridSearch(
   vectorIndex: VectorizeIndex,
   db: D1Database | undefined,
   queryVector: number[],
-  options: { topK?: number; source?: string; chassis?: string; subsystem?: string; cdnBaseUrl?: string } = {}
+  options: {
+    topK?: number;
+    source?: string;
+    chassis?: string;
+    subsystem?: string;
+    cdnBaseUrl?: string;
+    category?: string;
+    manufacturer?: string;
+    model?: string;
+    market?: "us" | "eu" | "global";
+    model_year?: number;
+  } = {}
 ): Promise<HybridSearchResult[]> {
   const filter: VectorizeVectorMetadataFilter = {};
   if (options.source) filter["source"] = { $eq: options.source };
@@ -282,9 +348,32 @@ export async function hybridSearch(
     topK: options.topK ?? 8,
     ...(Object.keys(filter).length > 0 ? { filter } : {}),
   });
-  const hydrated = db ? await hydrateChunks(db, matches.map((m) => m.id)) : new Map<string, HydratedChunk>();
+  const hydrated = db
+    ? await hydrateChunks(db, matches.map((m) => m.id), {
+        category: options.category,
+        manufacturer: options.manufacturer,
+        model: options.model,
+        market: options.market,
+        model_year: options.model_year,
+      })
+    : new Map<string, HydratedChunk>();
 
-  return matches.map((m): HybridSearchResult => {
+  const hasFilters = Boolean(
+    options.category ||
+      options.manufacturer ||
+      options.model ||
+      options.market ||
+      options.model_year !== undefined
+  );
+
+  return matches
+    .filter((m) => {
+      if (hasFilters && db) {
+        return hydrated.has(m.id);
+      }
+      return true;
+    })
+    .map((m): HybridSearchResult => {
     const h = hydrated.get(m.id);
     if (!h) {
       return { id: m.id, score: m.score, source: m.metadata.source, page: m.metadata.page, section: m.metadata.section, text: m.metadata.text };
@@ -302,6 +391,9 @@ export async function hybridSearch(
       manufacturer: h.manufacturer,
       applicable_chassis: h.applicable_chassis,
       subsystem: h.subsystem,
+      model: h.model ?? undefined,
+      market: h.market ?? undefined,
+      metadata_json: h.metadata_json ?? undefined,
       ...(h.schematic_r2_key ? { schematic_r2_key: h.schematic_r2_key } : {}),
       ...(h.schematic_r2_key && options.cdnBaseUrl
         ? (() => {

@@ -193,6 +193,21 @@ npx tsx scripts/manage-keys.ts inspect --id my_client --local
 
 ## Ingesting Documentation
 
+### Universal Document Metadata & Naming Convention
+
+All manuals in the ingestion pipeline are indexed using a universal classification model:
+- **Four Universal Tags**: `category` (`chassis`, `climate`, `power`, `plumbing`, `other`), `manufacturer` (e.g. `ford`, `mercedes`, `espar`, `victron`), `model` (e.g. `transit`, `sprinter`, `airtronic_s2`, `multiplus_ii`), and `market` (`us`, `eu`, `global`).
+- **Flexible Metadata Pouch (`metadata_json`)**: Stores model year ranges (`year_start`, `year_end`), chassis codes (`V363N`, `VS30`), voltage, and fuel types.
+
+#### Document Naming Convention (Tier 1 Fast Path)
+Files named according to `{category}_{manufacturer}_{model}_{market}_{extra}.pdf` are deterministically parsed without AI calls:
+- `chassis_ford_transit_us_2020-2024.pdf` → Category: `chassis`, Manufacturer: `ford`, Model: `transit`, Market: `us`, `year_start: 2020`, `year_end: 2024`
+- `climate_espar_airtronic-s2_global_diesel-12v.pdf` → Category: `climate`, Manufacturer: `espar`, Model: `airtronic-s2`, Market: `global`, `fuel: diesel`, `voltage: 12`
+
+#### AI Cover-Page Pass (Tier 2 Fallback)
+For non-conforming filenames (e.g., `MY24_Transit_BEMM_V363N_20APR24_J2_V2_R2.pdf`), the pipeline extracts plain text from Pages 1 and 2 and classifies the document using DeepInfra (`deepseek-ai/DeepSeek-V4-Flash-0731`).
+> **Secret Requirement**: Set `DEEPINFRA_TOKEN` in repository secrets to enable automatic DeepInfra cover-page classification during GitHub Actions ingestion.
+
 ### Automated PDF Manual Ingestion (GitOps)
 
 PDF manuals placed in `docs/manuals/*.pdf` are automatically parsed, chunked, embedded, and

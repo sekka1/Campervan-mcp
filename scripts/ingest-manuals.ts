@@ -38,6 +38,10 @@ import {
   type EncodedSchematic,
   type SchematicImage,
 } from "./schematics";
+import {
+  extractDocumentMetadata,
+  type UniversalMetadata,
+} from "./metadata";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -606,10 +610,13 @@ export interface D1Statement {
 export interface D1DocumentRecord {
   id: string;
   title: string;
-  category: D1Category;
+  category: string;
   manufacturer: string;
   applicableChassis: string;
   rawR2Path: string;
+  model?: string;
+  market?: string;
+  metadata_json?: string;
 }
 
 /** Returns the D1 database ID from the environment, or undefined when D1 writes are disabled. */
@@ -622,15 +629,19 @@ export function buildDocumentRecord(
   id: string,
   title: string,
   classificationPath: string,
-  rawR2Path: string
+  rawR2Path: string,
+  metadata?: UniversalMetadata
 ): D1DocumentRecord {
   return {
     id,
     title,
-    category: classifyD1Category(classificationPath),
-    manufacturer: deriveManufacturer(classificationPath),
+    category: metadata?.category ?? classifyD1Category(classificationPath),
+    manufacturer: metadata?.manufacturer ?? deriveManufacturer(classificationPath),
     applicableChassis: classifyChassis(classificationPath),
     rawR2Path,
+    model: metadata?.model ?? "unknown",
+    market: metadata?.market ?? "global",
+    metadata_json: metadata?.metadata_json ?? "{}",
   };
 }
 
@@ -654,16 +665,21 @@ export function buildD1UpsertStatements(
   chunks: ManualChunk[],
   images: SchematicImage[] = []
 ): D1Statement[] {
+  const model = doc.model ?? "unknown";
+  const market = doc.market ?? "global";
+  const metadataJson = doc.metadata_json ?? "{}";
+
   const statements: D1Statement[] = [
     { sql: "DELETE FROM document_chunks WHERE document_id = ?", params: [doc.id] },
     { sql: "DELETE FROM schematic_images WHERE document_id = ?", params: [doc.id] },
     {
-      sql: `INSERT INTO documents (id, title, category, manufacturer, applicable_chassis, raw_r2_path)
-VALUES (?, ?, ?, ?, ?, ?)
+      sql: `INSERT INTO documents (id, title, category, manufacturer, applicable_chassis, raw_r2_path, model, market, metadata_json)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET title = excluded.title, category = excluded.category,
   manufacturer = excluded.manufacturer, applicable_chassis = excluded.applicable_chassis,
-  raw_r2_path = excluded.raw_r2_path`,
-      params: [doc.id, doc.title, doc.category, doc.manufacturer, doc.applicableChassis, doc.rawR2Path],
+  raw_r2_path = excluded.raw_r2_path, model = excluded.model, market = excluded.market,
+  metadata_json = excluded.metadata_json`,
+      params: [doc.id, doc.title, doc.category, doc.manufacturer, doc.applicableChassis, doc.rawR2Path, model, market, metadataJson],
     },
   ];
 
@@ -683,12 +699,14 @@ ON CONFLICT(id) DO UPDATE SET document_id = excluded.document_id, page_number = 
   for (const chunk of chunks) {
     const wordCount = chunk.text.split(/\s+/).filter(Boolean).length;
     statements.push({
-      sql: `INSERT INTO document_chunks (id, document_id, page_number, section_title, subsystem, chunk_text, word_count, token_count, schematic_image_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      sql: `INSERT INTO document_chunks (id, document_id, page_number, section_title, subsystem, chunk_text, word_count, token_count, schematic_image_id, category, manufacturer, model, market, metadata_json)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET document_id = excluded.document_id, page_number = excluded.page_number,
   section_title = excluded.section_title, subsystem = excluded.subsystem, chunk_text = excluded.chunk_text,
   word_count = excluded.word_count, token_count = excluded.token_count,
-  schematic_image_id = excluded.schematic_image_id`,
+  schematic_image_id = excluded.schematic_image_id,
+  category = excluded.category, manufacturer = excluded.manufacturer, model = excluded.model,
+  market = excluded.market, metadata_json = excluded.metadata_json`,
       params: [
         chunk.id,
         doc.id,
@@ -699,6 +717,11 @@ ON CONFLICT(id) DO UPDATE SET document_id = excluded.document_id, page_number = 
         wordCount,
         Math.ceil(wordCount * TOKENS_PER_WORD),
         imageByPage.get(chunk.pageNumber) ?? null,
+        doc.category,
+        doc.manufacturer,
+        model,
+        market,
+        metadataJson,
       ],
     });
   }
@@ -931,9 +954,12 @@ export async function processAddedModifiedFile(
     }
   }
 
+  const coverPageText = Array.isArray(text) ? text.slice(0, 2).join("\n") : (typeof text === "string" ? text : "");
+  const metadata = await extractDocumentMetadata(filePath, coverPageText);
+
   if (d1DatabaseId) {
     await uploadSchematics(schematics, createRestSchematicUploader(accountId, apiToken));
-    const doc = buildDocumentRecord(documentId, title, filePath, filePath);
+    const doc = buildDocumentRecord(documentId, title, filePath, filePath, metadata);
     await executeD1Statements(
       accountId,
       apiToken,
