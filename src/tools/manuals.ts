@@ -75,6 +75,28 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
           .enum(["12v_dc", "48v_dc", "120v_ac", "plumbing", "heating_cooling", "structural", "chassis_interface"])
           .optional()
           .describe("Optional subsystem filter"),
+        category: z
+          .enum(["chassis", "climate", "power", "plumbing", "other"])
+          .optional()
+          .describe("Filter by equipment category: chassis, climate, power, plumbing, other"),
+        manufacturer: z
+          .string()
+          .optional()
+          .describe("e.g. ford, mercedes, espar, victron"),
+        model: z
+          .string()
+          .optional()
+          .describe("e.g. transit, sprinter, airtronic_s2, multiplus_ii"),
+        market: z
+          .enum(["us", "eu", "global"])
+          .default("us")
+          .optional()
+          .describe("Regional market filter: us, eu, or global (default us)"),
+        model_year: z
+          .number()
+          .int()
+          .optional()
+          .describe("Filter by vehicle or appliance model year (e.g. 2024)"),
       },
     },
     async (args) => {
@@ -86,6 +108,11 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
         ...(args.source_filter ? { source: args.source_filter } : {}),
         ...(args.chassis ? { chassis: args.chassis } : {}),
         ...(args.subsystem ? { subsystem: args.subsystem } : {}),
+        ...(args.category ? { category: args.category } : {}),
+        ...(args.manufacturer ? { manufacturer: args.manufacturer } : {}),
+        ...(args.model ? { model: args.model } : {}),
+        ...(args.market ? { market: args.market } : {}),
+        ...(args.model_year !== undefined ? { model_year: args.model_year } : {}),
       });
 
       const payload =

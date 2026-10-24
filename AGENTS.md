@@ -22,7 +22,19 @@ This system operates on a fundamental division of responsibilities:
 
 ## 2. Core Rules & Prohibited Patterns for Agents
 
-1. **Zero Vehicle-Specific Tables or Dictionaries (Anti-Hardcoding Rule):**
+1. **Universal Metadata Taxonomy (4 Tags + Flexible JSON Pouch):**
+   - All ingested documentation conforms to a universal metadata model:
+     - 4 Universal Tags: `category` ("chassis" | "climate" | "power" | "plumbing" | "other"), `manufacturer` (string), `model` (string), and `market` ("us" | "eu" | "global").
+     - 1 Flexible JSON Pouch: `metadata_json` (e.g. `{"year_start": 2020, "year_end": 2024, "chassis_code": "V363N", "voltage": 12, "fuel": "diesel"}`).
+   - **Two-Tier Ingestion Classification**:
+     - *Tier 1 (Fast Path)*: Deterministic filename regex `{category}_{manufacturer}_{model}_{market}_{extra}.pdf`.
+     - *Tier 2 (AI Fallback)*: DeepInfra OpenAI-compatible chat completions API using model `deepseek-ai/DeepSeek-V4-Flash-0731` against Pages 1–2 plain text when filenames are non-conforming.
+   - **Anti-Pattern Prohibition**:
+     - ❌ **NEVER** create component-specific or vehicle-specific tables (e.g., `chassis_specs`, `heater_specs`, `transit_rules`).
+     - ❌ **NEVER** create vehicle-specific tools or hardcoded constants in TypeScript.
+   - When new chassis, model years, or appliances are added, they are classified into the universal `documents` and `document_chunks` tables with zero schema bloat.
+
+2. **Zero Vehicle-Specific Tables or Dictionaries (Anti-Hardcoding Rule):**
    - ❌ **DO NOT** create vehicle-specific tables in D1 (e.g., `chassis_rules`, `transit_specs`, `victron_components`).
    - ❌ **DO NOT** add vehicle-specific constant dictionaries (like `CHASSIS_RULES_DB`) to `src/utils/formulas.ts`.
    - ❌ **DO NOT** create vehicle-specific tools (e.g., `evaluate_chassis_rules`).
