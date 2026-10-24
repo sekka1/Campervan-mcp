@@ -119,6 +119,20 @@ describe("Tier 2: DeepInfra AI Cover-Page Pass", () => {
     expect(meta.metadata.chassis_code).toBe("V363N");
   });
 
+  it("includes filename in DeepInfra prompt when filename is provided", async () => {
+    const mockResponse = {
+      choices: [{ message: { content: JSON.stringify({ category: "chassis", manufacturer: "ford", model: "transit", market: "us" }) } }],
+    };
+    const mockFetch = vi.fn(async () =>
+      new Response(JSON.stringify(mockResponse), { status: 200 })
+    ) as unknown as typeof fetch;
+
+    await classifyWithDeepInfra("Page text", "token", mockFetch, "MY24_Transit_BEMM.pdf");
+    const [_, init] = (mockFetch as unknown as { mock: { calls: Array<[string, RequestInit]> } }).mock.calls[0]!;
+    const body = JSON.parse(init.body as string);
+    expect(body.messages[1].content).toContain("Filename: MY24_Transit_BEMM.pdf");
+  });
+
   it("falls back to default metadata when DEEPINFRA_TOKEN is not set", async () => {
     const meta = await classifyWithDeepInfra("Some text without token", undefined);
     expect(meta).toEqual(DEFAULT_UNIVERSAL_METADATA);

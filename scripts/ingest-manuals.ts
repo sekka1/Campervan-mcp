@@ -957,6 +957,9 @@ export async function processAddedModifiedFile(
 
   const coverPageText = extractCoverPageText(text);
   const metadata = await extractDocumentMetadata(filePath, coverPageText);
+  console.log(
+    `Classified "${filePath}" -> category=${metadata.category}, manufacturer=${metadata.manufacturer}, model=${metadata.model}, market=${metadata.market}, metadata=${metadata.metadata_json}`
+  );
 
   if (d1DatabaseId) {
     await uploadSchematics(schematics, createRestSchematicUploader(accountId, apiToken));

@@ -179,7 +179,8 @@ export function extractCoverPageText(
 export async function classifyWithDeepInfra(
   coverPageText: string,
   deepinfraToken?: string,
-  customFetch: typeof fetch = globalThis.fetch
+  customFetch: typeof fetch = globalThis.fetch,
+  filename?: string
 ): Promise<UniversalMetadata> {
   const token = deepinfraToken ?? process.env["DEEPINFRA_TOKEN"];
   if (!token) {
@@ -206,7 +207,7 @@ export async function classifyWithDeepInfra(
           { role: "system", content: CLASSIFICATION_PROMPT },
           {
             role: "user",
-            content: `Document Text (First ${METADATA_AI_MAX_PAGES} Pages):\n${truncatedText}\n\nRespond with valid JSON only.`,
+            content: `${filename ? `Filename: ${filename}\n\n` : ""}Document Text (First ${METADATA_AI_MAX_PAGES} Pages):\n${truncatedText}\n\nRespond with valid JSON only.`,
           },
         ],
         response_format: { type: "json_object" },
@@ -278,5 +279,6 @@ export async function extractDocumentMetadata(
   if (fromFilename) {
     return fromFilename;
   }
-  return classifyWithDeepInfra(coverPageText, deepinfraToken, customFetch);
+  const filename = basename(filePathOrName);
+  return classifyWithDeepInfra(coverPageText, deepinfraToken, customFetch, filename);
 }

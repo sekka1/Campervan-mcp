@@ -353,6 +353,9 @@ export async function processAddedModifiedR2Object(
       );
     });
     const metadata = await extractDocumentMetadata(key, coverPageText);
+    console.log(
+      `Classified "${key}" -> category=${metadata.category}, manufacturer=${metadata.manufacturer}, model=${metadata.model}, market=${metadata.market}, metadata=${metadata.metadata_json}`
+    );
     const doc = buildDocumentRecord(sanitizeR2Key(key), deriveManualTitleFromKey(key), key, key, metadata);
     await executeD1Statements(
       accountId,
