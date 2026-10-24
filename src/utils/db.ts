@@ -250,8 +250,9 @@ export async function hydrateChunks(
   }
 
   if (filters.model_year !== undefined) {
+    const metaExpr = `COALESCE(c.metadata_json, d.metadata_json)`;
     conditions.push(
-      `(COALESCE(c.metadata_json, d.metadata_json) IS NULL OR COALESCE(c.metadata_json, d.metadata_json) = '{}' OR (CAST(json_extract(COALESCE(c.metadata_json, d.metadata_json), '$.year_start') AS INTEGER) <= ? AND CAST(json_extract(COALESCE(c.metadata_json, d.metadata_json), '$.year_end') AS INTEGER) >= ?))`
+      `(json_extract(${metaExpr}, '$.year_start') IS NULL OR (CAST(json_extract(${metaExpr}, '$.year_start') AS INTEGER) <= ? AND CAST(COALESCE(json_extract(${metaExpr}, '$.year_end'), json_extract(${metaExpr}, '$.year_start')) AS INTEGER) >= ?))`
     );
     params.push(filters.model_year, filters.model_year);
   }

@@ -139,7 +139,7 @@ describe("universal metadata filtering in hydrateChunks and hybridSearch", () =>
     expect(sql).toContain("LOWER(COALESCE(c.manufacturer, d.manufacturer, '')) = ?");
     expect(sql).toContain("LOWER(COALESCE(c.model, d.model, '')) = ?");
     expect(sql).toContain("LOWER(COALESCE(c.market, d.market, 'global')) IN (?, 'global')");
-    expect(sql).toContain("json_extract(COALESCE(c.metadata_json, d.metadata_json), '$.year_start')");
+    expect(sql).toContain("json_extract(COALESCE(c.metadata_json, d.metadata_json), '$.year_start') IS NULL");
 
     expect(bind).toHaveBeenCalledWith("chunk_1", "chassis", "ford", "transit", "us", 2024, 2024);
   });
@@ -204,6 +204,35 @@ describe("universal metadata filtering in hydrateChunks and hybridSearch", () =>
     expect(results).toHaveLength(1);
     expect(results[0]?.id).toBe("chunk_2024");
     expect(results[0]?.metadata_json).toContain("2020");
+  });
+
+  it("passes appliance chunk with null year keys when model_year is queried", async () => {
+    const match = { id: "chunk_heater", score: 0.92, metadata: { source: "velit", text: "heater" } };
+    const { index } = makeIndex([match]);
+
+    const { db } = makeDb([
+      {
+        id: "chunk_heater",
+        document_id: "doc_heater",
+        document_title: "Velit Heater",
+        category: "climate",
+        manufacturer: "velit",
+        model: "2026",
+        market: "global",
+        metadata_json: JSON.stringify({ year_start: null, year_end: null, voltage: 12 }),
+        applicable_chassis: "universal",
+        page_number: 1,
+        section_title: null,
+        subsystem: "heating_cooling",
+        chunk_text: "12V diesel air heater installation",
+        schematic_r2_key: null,
+        schematic_caption: null,
+      },
+    ]);
+
+    const results = await hybridSearch(index, db, vec, { model_year: 2024 });
+    expect(results).toHaveLength(1);
+    expect(results[0]?.id).toBe("chunk_heater");
   });
 
   it("returns top-k matches across all categories when no filters are supplied", async () => {
