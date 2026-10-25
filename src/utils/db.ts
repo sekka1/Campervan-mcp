@@ -225,57 +225,88 @@ export async function hydrateChunks(
   const map = new Map<string, HydratedChunk>();
   if (ids.length === 0) return map;
 
-  const placeholders = ids.map(() => "?").join(", ");
-  const conditions: string[] = [`c.id IN (${placeholders})`];
-  const params: unknown[] = [...ids];
+  const buildQueryAndParams = (f: HydrateFilterOptions) => {
+    const placeholders = ids.map(() => "?").join(", ");
+    const conditions: string[] = [`c.id IN (${placeholders})`];
+    const params: unknown[] = [...ids];
 
-  if (filters.category) {
-    conditions.push(`LOWER(COALESCE(c.category, d.category, '')) = ?`);
-    params.push(filters.category.toLowerCase().trim());
-  }
+    if (f.category) {
+      conditions.push(`LOWER(COALESCE(c.category, d.category, '')) = ?`);
+      params.push(f.category.toLowerCase().trim());
+    }
 
-  if (filters.manufacturer) {
-    conditions.push(`LOWER(COALESCE(c.manufacturer, d.manufacturer, '')) = ?`);
-    params.push(filters.manufacturer.toLowerCase().trim());
-  }
+    if (f.manufacturer) {
+      const m = f.manufacturer.toLowerCase().trim();
+      conditions.push(
+        `(LOWER(COALESCE(c.manufacturer, d.manufacturer, '')) = ? OR ? LIKE '%' || LOWER(COALESCE(c.manufacturer, d.manufacturer, '')) || '%' OR LOWER(COALESCE(c.manufacturer, d.manufacturer, '')) LIKE '%' || ? || '%')`
+      );
+      params.push(m, m, m);
+    }
 
-  if (filters.model) {
-    conditions.push(`LOWER(COALESCE(c.model, d.model, '')) = ?`);
-    params.push(filters.model.toLowerCase().trim());
-  }
+    if (f.model) {
+      const m = f.model.toLowerCase().trim();
+      conditions.push(
+        `(LOWER(COALESCE(c.model, d.model, '')) = ? OR ? LIKE '%' || LOWER(COALESCE(c.model, d.model, '')) || '%' OR LOWER(COALESCE(c.model, d.model, '')) LIKE '%' || ? || '%')`
+      );
+      params.push(m, m, m);
+    }
 
-  if (filters.market) {
-    conditions.push(`LOWER(COALESCE(c.market, d.market, 'global')) IN (?, 'global')`);
-    params.push(filters.market.toLowerCase().trim());
-  }
+    if (f.market) {
+      conditions.push(`LOWER(COALESCE(c.market, d.market, 'global')) IN (?, 'global')`);
+      params.push(f.market.toLowerCase().trim());
+    }
 
-  if (filters.model_year !== undefined) {
-    const metaExpr = `COALESCE(c.metadata_json, d.metadata_json)`;
-    conditions.push(
-      `(json_extract(${metaExpr}, '$.year_start') IS NULL OR (CAST(json_extract(${metaExpr}, '$.year_start') AS INTEGER) <= ? AND CAST(COALESCE(json_extract(${metaExpr}, '$.year_end'), json_extract(${metaExpr}, '$.year_start')) AS INTEGER) >= ?))`
-    );
-    params.push(filters.model_year, filters.model_year);
-  }
+    if (f.model_year !== undefined) {
+      const metaExpr = `COALESCE(c.metadata_json, d.metadata_json)`;
+      conditions.push(
+        `(json_extract(${metaExpr}, '$.year_start') IS NULL OR (CAST(json_extract(${metaExpr}, '$.year_start') AS INTEGER) <= ? AND CAST(COALESCE(json_extract(${metaExpr}, '$.year_end'), json_extract(${metaExpr}, '$.year_start')) AS INTEGER) >= ?))`
+      );
+      params.push(f.model_year, f.model_year);
+    }
 
-  const query = `SELECT c.id, c.document_id, d.title AS document_title,
-              COALESCE(c.category, d.category) AS category,
-              COALESCE(c.manufacturer, d.manufacturer) AS manufacturer,
-              d.applicable_chassis, c.page_number, c.section_title, c.subsystem, c.chunk_text,
-              s.r2_key AS schematic_r2_key, s.caption AS schematic_caption,
-              COALESCE(c.model, d.model) AS model,
-              COALESCE(c.market, d.market) AS market,
-              COALESCE(c.metadata_json, d.metadata_json) AS metadata_json
-       FROM document_chunks c
-       JOIN documents d ON d.id = c.document_id
-       LEFT JOIN schematic_images s ON s.id = c.schematic_image_id
-       WHERE ${conditions.join(" AND ")}`;
+    const query = `SELECT c.id, c.document_id, d.title AS document_title,
+                COALESCE(c.category, d.category) AS category,
+                COALESCE(c.manufacturer, d.manufacturer) AS manufacturer,
+                d.applicable_chassis, c.page_number, c.section_title, c.subsystem, c.chunk_text,
+                s.r2_key AS schematic_r2_key, s.caption AS schematic_caption,
+                COALESCE(c.model, d.model) AS model,
+                COALESCE(c.market, d.market) AS market,
+                COALESCE(c.metadata_json, d.metadata_json) AS metadata_json
+         FROM document_chunks c
+         JOIN documents d ON d.id = c.document_id
+         LEFT JOIN schematic_images s ON s.id = c.schematic_image_id
+         WHERE ${conditions.join(" AND ")}`;
 
+    return { query, params };
+  };
+
+  const { query, params } = buildQueryAndParams(filters);
   const { results } = await db
     .prepare(query)
     .bind(...params)
     .all<HydratedChunk>();
 
   for (const row of results ?? []) map.set(row.id, row);
+
+  // Automatic Unfiltered Fallback:
+  // If restrictive metadata filters (category, manufacturer, model) produced 0 rows,
+  // re-run the hydration query without those restrictive filters (preserving market and model_year)
+  // so LLM filter over-specification does not drop valid semantic search hits.
+  const hasRestrictiveFilters = Boolean(filters.category || filters.manufacturer || filters.model);
+  if (map.size === 0 && hasRestrictiveFilters) {
+    const fallbackFilters: HydrateFilterOptions = {
+      market: filters.market,
+      model_year: filters.model_year,
+    };
+    const fallback = buildQueryAndParams(fallbackFilters);
+    const fallbackResults = await db
+      .prepare(fallback.query)
+      .bind(...fallback.params)
+      .all<HydratedChunk>();
+
+    for (const row of fallbackResults.results ?? []) map.set(row.id, row);
+  }
+
   return map;
 }
 
@@ -345,10 +376,18 @@ export async function hybridSearch(
   }
   if (options.subsystem) filter["subsystem"] = { $eq: options.subsystem };
 
-  const matches = await searchManuals(vectorIndex, queryVector, {
+  let matches = await searchManuals(vectorIndex, queryVector, {
     topK: options.topK ?? 8,
     ...(Object.keys(filter).length > 0 ? { filter } : {}),
   });
+
+  // If Vectorize metadata filtering (e.g. over-specific subsystem or chassis) yields 0 matches,
+  // fall back to unfiltered semantic search so relevant chunks are not lost.
+  if (matches.length === 0 && Object.keys(filter).length > 0) {
+    matches = await searchManuals(vectorIndex, queryVector, {
+      topK: options.topK ?? 8,
+    });
+  }
   const hydrated = db
     ? await hydrateChunks(db, matches.map((m) => m.id), {
         category: options.category,

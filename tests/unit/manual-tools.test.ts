@@ -93,6 +93,7 @@ describe("registerManualTools - search_van_manuals", () => {
     const parsed = JSON.parse(response.content[0].text);
     expect(parsed.results).toEqual([]);
     expect(parsed.message).toBe("No relevant documentation found for the given query.");
+    expect(parsed.applied_filters).toEqual({ chassis: "ram_promaster" });
   });
 
   it("fails fast with clear error message when Workers AI embedding throws", async () => {
