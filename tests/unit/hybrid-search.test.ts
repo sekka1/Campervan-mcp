@@ -6,8 +6,17 @@ function makeIndex(matches: unknown[]) {
   return { index: { query } as unknown as VectorizeIndex, query };
 }
 
-function makeDb(rows: unknown[]) {
-  const bind = vi.fn().mockReturnValue({ all: vi.fn().mockResolvedValue({ results: rows }) });
+function makeDb(rows: unknown[], fallbackRows?: unknown[]) {
+  let callCount = 0;
+  const bind = vi.fn().mockImplementation(() => ({
+    all: vi.fn().mockImplementation(async () => {
+      callCount++;
+      if (callCount > 1 && fallbackRows !== undefined) {
+        return { results: fallbackRows };
+      }
+      return { results: rows };
+    }),
+  }));
   const prepare = vi.fn().mockReturnValue({ bind });
   return { db: { prepare } as unknown as D1Database, prepare, bind };
 }
@@ -123,7 +132,21 @@ describe("universal metadata filtering in hydrateChunks and hybridSearch", () =>
   const vec = new Array(768).fill(0.1) as number[];
 
   it("applies category, manufacturer, model, market, and model_year SQL filters in hydrateChunks", async () => {
-    const { db, prepare, bind } = makeDb([]);
+    const dummyRow = {
+      id: "chunk_1",
+      document_id: "doc_1",
+      document_title: "Doc",
+      category: "chassis",
+      manufacturer: "ford",
+      applicable_chassis: "transit",
+      page_number: 1,
+      section_title: null,
+      subsystem: "12v_dc",
+      chunk_text: "text",
+      schematic_r2_key: null,
+      schematic_caption: null,
+    };
+    const { db, prepare, bind } = makeDb([dummyRow]);
     await hydrateChunks(db, ["chunk_1"], {
       category: "chassis",
       manufacturer: "ford",
@@ -141,7 +164,7 @@ describe("universal metadata filtering in hydrateChunks and hybridSearch", () =>
     expect(sql).toContain("LOWER(COALESCE(c.market, d.market, 'global')) IN (?, 'global')");
     expect(sql).toContain("json_extract(COALESCE(c.metadata_json, d.metadata_json), '$.year_start') IS NULL");
 
-    expect(bind).toHaveBeenCalledWith("chunk_1", "chassis", "ford", "transit", "us", 2024, 2024);
+    expect(bind).toHaveBeenCalledWith("chunk_1", "chassis", "ford", "ford", "ford", "transit", "transit", "transit", "us", 2024, 2024);
   });
 
   it("excludes chunks tagged with market: eu when querying market: us", async () => {
@@ -277,4 +300,77 @@ describe("universal metadata filtering in hydrateChunks and hybridSearch", () =>
   });
 });
 
+
+  it("recovers via zero-result fallback when LLM passes category: power on a category: chassis document", async () => {
+    const vec = new Array(768).fill(0.1) as number[];
+    const match = { id: "chunk_ccp2", score: 0.94, metadata: { source: "ford", text: "CCP2 175A" } };
+    const { index } = makeIndex([match]);
+
+    const transitDoc = {
+      id: "chunk_ccp2",
+      document_id: "doc_transit",
+      document_title: "Ford Transit BEMM",
+      category: "chassis",
+      manufacturer: "ford",
+      model: "transit",
+      market: "us",
+      metadata_json: JSON.stringify({ year_start: 2020, year_end: 2024 }),
+      applicable_chassis: "transit",
+      page_number: 146,
+      section_title: "CCP2 Auxiliary Power",
+      subsystem: "12v_dc",
+      chunk_text: "High current customer connection point CCP2 is rated at 175A",
+      schematic_r2_key: null,
+      schematic_caption: null,
+    };
+
+    // First call with category: power returns empty results [], but fallback returns the transit chunk
+    const { db } = makeDb([], [transitDoc]);
+
+    const results = await hybridSearch(index, db, vec, {
+      category: "power",
+      model: "transit",
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.id).toBe("chunk_ccp2");
+    expect(results[0]?.document_title).toBe("Ford Transit BEMM");
+  });
+
+  it("matches model: Ford Transit to transit via bidirectional SQL substring matching", async () => {
+    const vec = new Array(768).fill(0.1) as number[];
+    const match = { id: "chunk_grounding", score: 0.91, metadata: { source: "ford", text: "grounding" } };
+    const { index } = makeIndex([match]);
+
+    const transitDoc = {
+      id: "chunk_grounding",
+      document_id: "doc_transit",
+      document_title: "Ford Transit BEMM",
+      category: "chassis",
+      manufacturer: "ford",
+      model: "transit",
+      market: "us",
+      metadata_json: "{}",
+      applicable_chassis: "transit",
+      page_number: 88,
+      section_title: "Ground Points",
+      subsystem: "12v_dc",
+      chunk_text: "Vehicle ground points for auxiliary battery connection",
+      schematic_r2_key: null,
+      schematic_caption: null,
+    };
+
+    const { db, prepare, bind } = makeDb([transitDoc]);
+
+    const results = await hybridSearch(index, db, vec, {
+      model: "Ford Transit",
+    });
+
+    expect(prepare).toHaveBeenCalled();
+    const sql = prepare.mock.calls[0][0] as string;
+    expect(sql).toContain("OR ? LIKE '%' || LOWER(COALESCE(c.model, d.model, '')) || '%'");
+    expect(bind).toHaveBeenCalledWith("chunk_grounding", "ford transit", "ford transit", "ford transit");
+    expect(results).toHaveLength(1);
+    expect(results[0]?.id).toBe("chunk_grounding");
+  });
 });

@@ -78,7 +78,7 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
         category: z
           .enum(["chassis", "climate", "power", "plumbing", "other"])
           .optional()
-          .describe("Filter by equipment category: chassis, climate, power, plumbing, other"),
+          .describe("Optional document category filter. Leave omitted unless searching exclusively for a specific document type. Note: Vehicle body & electrical mounting manuals (like Ford BEMM) are under 'chassis', even for electrical/wiring topics."),
         manufacturer: z
           .string()
           .optional()
@@ -86,7 +86,7 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
         model: z
           .string()
           .optional()
-          .describe("e.g. transit, sprinter, airtronic_s2, multiplus_ii"),
+          .describe("Optional short model name in lowercase (e.g., 'transit', 'sprinter', 'promaster'). Do not include the manufacturer name."),
         market: z
           .enum(["us", "eu", "global"])
           .default("us")
@@ -115,12 +115,24 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
         ...(args.model_year !== undefined ? { model_year: args.model_year } : {}),
       });
 
+      const appliedFilters = {
+        ...(args.category ? { category: args.category } : {}),
+        ...(args.manufacturer ? { manufacturer: args.manufacturer } : {}),
+        ...(args.model ? { model: args.model } : {}),
+        ...(args.market ? { market: args.market } : {}),
+        ...(args.model_year !== undefined ? { model_year: args.model_year } : {}),
+        ...(args.chassis ? { chassis: args.chassis } : {}),
+        ...(args.subsystem ? { subsystem: args.subsystem } : {}),
+        ...(args.source_filter ? { source: args.source_filter } : {}),
+      };
+
       const payload =
         results.length === 0
           ? {
               results: [],
               message: "No relevant documentation found for the given query.",
               query: args.query,
+              applied_filters: appliedFilters,
             }
           : {
               results: results.map(({ id, source, document_title, manufacturer, ...rest }) => ({
@@ -132,6 +144,7 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
               })),
               count: results.length,
               query: args.query,
+              applied_filters: appliedFilters,
             };
 
       return {
