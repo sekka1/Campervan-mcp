@@ -66,7 +66,8 @@ import {
   type ManualChunk,
   type VectorizeVector,
 } from "./ingest-manuals";
-import type { EncodedSchematic } from "./schematics";
+import { ensureMathSumPrecisePolyfill, type EncodedSchematic } from "./schematics";
+ensureMathSumPrecisePolyfill();
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -436,26 +437,44 @@ export async function runSync(options: SyncOptions): Promise<void> {
     delete updatedManifest[key];
   }
 
-  for (const obj of delta.addedOrModified) {
-    const chunkCount = await processAddedModifiedR2Object(
-      r2Client,
-      R2_BUCKET_NAME,
-      obj.key,
-      accountId,
-      apiToken,
-      dryRun,
-      d1DatabaseId
-    );
-    updatedManifest[obj.key] = { etag: obj.etag, chunkCount };
+  const errors: Array<{ key: string; error: unknown }> = [];
+  const total = delta.addedOrModified.length;
+
+  for (let i = 0; i < total; i++) {
+    const obj = delta.addedOrModified[i]!;
+    console.log(`Processing [${i + 1}/${total}]: "${obj.key}"...`);
+    try {
+      const chunkCount = await processAddedModifiedR2Object(
+        r2Client,
+        R2_BUCKET_NAME,
+        obj.key,
+        accountId,
+        apiToken,
+        dryRun,
+        d1DatabaseId
+      );
+      updatedManifest[obj.key] = { etag: obj.etag, chunkCount };
+    } catch (err: unknown) {
+      console.error(
+        `Error processing "${obj.key}":`,
+        err instanceof Error ? err.stack || err.message : err
+      );
+      errors.push({ key: obj.key, error: err });
+    }
   }
 
   if (dryRun) {
     console.log("[dry-run] Skipping manifest update.");
-    return;
+  } else {
+    await writeManifest(r2Client, R2_BUCKET_NAME, updatedManifest);
+    console.log("✓ Manifest updated.");
   }
 
-  await writeManifest(r2Client, R2_BUCKET_NAME, updatedManifest);
-  console.log("✓ Manifest updated.");
+  if (errors.length > 0) {
+    throw new Error(
+      `Ingestion completed with ${errors.length} failure(s): ${errors.map((e) => e.key).join(", ")}`
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

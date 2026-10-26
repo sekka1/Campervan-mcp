@@ -33,11 +33,14 @@ import { basename, resolve } from "node:path";
 import { extractImages, extractText, getDocumentProxy } from "unpdf";
 import {
   deriveSectionTitle,
+  ensureMathSumPrecisePolyfill,
   isSchematicCandidate,
   renderCompositeSchematic,
   type EncodedSchematic,
   type SchematicImage,
 } from "./schematics";
+
+ensureMathSumPrecisePolyfill();
 import {
   extractCoverPageText,
   extractDocumentMetadata,
@@ -1001,7 +1004,10 @@ export async function runIngestion(options: IngestOptions): Promise<void> {
     await processDeletedFile(filePath, accountId, apiToken, dryRun, d1DatabaseId);
   }
 
-  for (const filePath of addedModified) {
+  const total = addedModified.length;
+  for (let i = 0; i < total; i++) {
+    const filePath = addedModified[i]!;
+    console.log(`Processing [${i + 1}/${total}]: "${filePath}"...`);
     await processAddedModifiedFile(filePath, accountId, apiToken, dryRun, d1DatabaseId);
   }
 }

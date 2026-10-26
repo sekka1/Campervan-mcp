@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { getDocumentProxy } from "unpdf";
-import { renderCompositeSchematic } from "../schematics";
+import { renderCompositeSchematic, ensureMathSumPrecisePolyfill } from "../schematics";
 import { inflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import {
@@ -90,6 +90,52 @@ describe("renderCompositeSchematic", () => {
     expect(result.image.mimeType).toBe("image/png");
     expect(result.image.width).toBe(1224);
     expect(result.image.height).toBe(1584);
+    expect(result.bytes.subarray(0, 8)).toEqual(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  });
+  it("polyfills Math.sumPrecise and correctly computes sums of iterables", () => {
+    const mathAny = Math as unknown as { sumPrecise?: unknown };
+    delete mathAny.sumPrecise;
+    expect(mathAny.sumPrecise).toBeUndefined();
+
+    ensureMathSumPrecisePolyfill();
+    expect(typeof (Math as unknown as { sumPrecise: unknown }).sumPrecise).toBe("function");
+
+    const sum = (Math as unknown as { sumPrecise: (items: number[]) => number }).sumPrecise([1.5, 2.25, 3.25]);
+    expect(sum).toBe(7);
+  });
+
+  it("successfully renders a PDF containing dashed vector paths under Node 22 without Math.sumPrecise crash", async () => {
+    ensureMathSumPrecisePolyfill();
+
+    const pdfContent = `%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >> endobj
+4 0 obj << /Length 55 >>
+stream
+q
+[3 3] 0 d
+10 10 m
+190 190 l
+S
+Q
+endstream
+endobj
+xref
+0 5
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000210 00000 n 
+trailer << /Size 5 /Root 1 0 R >>
+startxref
+315
+%%EOF`;
+
+    const pdf = await getDocumentProxy(new Uint8Array(Buffer.from(pdfContent)));
+    const result = await renderCompositeSchematic(pdf, "dashed_test", "Dashed Manual", 1);
+    expect(result.bytes.length).toBeGreaterThan(0);
     expect(result.bytes.subarray(0, 8)).toEqual(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   });
 });
