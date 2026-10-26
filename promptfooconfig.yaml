@@ -6,9 +6,9 @@ prompts:
 
 providers:
   - id: "file://scripts/promptfoo-mcp-provider.mjs"
-    label: "DeepSeek V4 Flash 0731"
+    label: "DeepSeek V4.1 Flash 1017 (0.20/in)"
     config:
-      model: "deepseek-ai/DeepSeek-V4-Flash-0731"
+      model: "deepseek-ai/DeepSeek-V4.1-Flash-1017"
       serverUrl: "https://campervan-mcp-server.garlandk.workers.dev"
       apiBaseUrl: "https://api.deepinfra.com/v1/openai"
       apiKeyEnvar: "DEEPINFRA_TOKEN"
