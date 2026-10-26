@@ -1,3 +1,4 @@
+import { callMcpTool as promptfooCallMcpTool } from "../../scripts/promptfoo-mcp-provider.mjs";
 import { describe, it, expect } from "vitest";
 
 const RAW_BASE_URL = process.env.BASE_URL;
@@ -198,5 +199,17 @@ describe("Post-Deployment Live Smoke Test Suite", () => {
     expect(data.recommended_fuse_amps).toBeGreaterThanOrEqual(70);
     expect(data.recommended_fuse_amps).toBeLessThanOrEqual(80);
     expect(data.fuse_type).toBe("MIDI / AMI Fuse");
+  });
+  it("Test P: CampervanPromptfooProvider callMcpTool transport against live endpoint", async () => {
+    console.log("-> [Test P] Testing promptfoo-mcp-provider.mjs callMcpTool against live endpoint...");
+    const content = (await promptfooCallMcpTool(
+      `${BASE_URL}/`,
+      "calculate_dc_wire_and_fuse",
+      { voltage: 12, distance_feet: 10, amps: 100 }
+    )) as Array<{ type: string; text: string }>;
+    expect(content).toBeDefined();
+    expect(content.length).toBeGreaterThan(0);
+    const parsed = JSON.parse(content[0]?.text || "{}");
+    expect(parsed.recommended_awg).toBeDefined();
   });
 });
