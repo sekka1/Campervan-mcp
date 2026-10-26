@@ -102,3 +102,26 @@ Before committing or submitting a PR, agents must ensure all quality gates pass:
 - **Local Worker Dev:** `pnpm dev`
 - **Apply Local D1 Migrations:** `npx cf d1 migrations apply 2aa73cfb-cf41-4ab3-b614-b0cf1eb7ec0c --dir d1/migrations --local --persist-to .wrangler/state`
 - 
+
+
+## 3. Retrieval & Search Architecture
+
+1. **Strict `top_k` Contract with Forward Continuation Expansion:**
+   - Technical manuals frequently introduce specification tables, wiring pinouts, or continuation rules in chunks following the section header (`#chunk_{N+1}`, `#chunk_{N+2}`).
+   - `hydrateChunks` identifies top-ranked hits and stitches forward continuation chunks into the parent chunk context.
+   - **Critical Invariant:** `hybridSearch` MUST strictly enforce `.slice(0, topK)` (default `8`) so that the array returned to the caller NEVER exceeds `top_k`.
+2. **Stop-Word-Filtered Multi-Token RRF:**
+   - Technical questions are tokenized by stripping standard English stop words (`where`, `what`, `are`, `the`, `for`, `and`, `with`, `regarding`, etc.) into distinct keywords of length >= 3.
+   - D1 ranks chunks by multi-token match count across `chunk_text` and `section_title`.
+   - Vector similarity ranks and keyword match ranks are fused via Reciprocal Rank Fusion (`RRF score = 1 / (60 + rank)`), ensuring multi-part questions retrieve chunks covering all parts of the user prompt.
+3. **Resilient Metadata Filtering:**
+   - Filters on `manufacturer` and `model` use bidirectional substring matching (`= ? OR ? LIKE "%" || col || "%" OR col LIKE "%" || ? || "%"`), so `"Ford Transit"` matches `"transit"`.
+   - If optional metadata filters (`category`, `manufacturer`, `model`, `subsystem`, `chassis`) produce `0` rows for non-empty vector candidates, `hydrateChunks` and `hybridSearch` automatically fall back to unfiltered retrieval (preserving only `market` and `model_year`) so over-specific filter guesses never drop valid semantic matches.
+
+## 4. Testing & Promptfoo Live Evaluation
+
+1. **2-Turn MCP Evaluation Loop (`scripts/promptfoo-mcp-provider.mjs` & `promptfooconfig.yaml`):**
+   - Promptfoo benchmark evaluations use a custom 2-turn MCP provider:
+     - **Turn 1:** Sends the prompt to the candidate model (e.g., DeepSeek V4 Flash, Qwen 3.6 MoE) with declared MCP tool definitions and executes returned `tool_calls` live via JSON-RPC against the MCP server.
+     - **Turn 2:** Appends the assistant `tool_calls` and `tool` role result messages to conversation history and calls the LLM again to synthesize a complete technical answer.
+     - **Trace & Synthesis Output:** Outputs both the `MCP Tool Result (${toolName}): ...` execution trace and the synthesized final response, satisfying both tool invocation assertions and LLM rubric assertions.

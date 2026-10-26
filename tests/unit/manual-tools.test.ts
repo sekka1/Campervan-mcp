@@ -216,4 +216,67 @@ describe("registerManualTools - search_van_manuals", () => {
     expect(parsed).toBe(8);
   });
 
+
+  it("strictly enforces top_k 8 in search_van_manuals when D1 has 15 contiguous chunks and continuation expansion runs", async () => {
+    const mcp = new McpServer({ name: "test-mcp", version: "1.0.0" });
+    const allMatches = Array.from({ length: 15 }, (_, i) => ({
+      id: `doc_bemm#chunk_${i + 1}`,
+      score: 0.95 - i * 0.01,
+      metadata: { source: "ford_bemm", text: `Chunk ${i + 1}` },
+    }));
+
+    const vectorIndex = {
+      query: vi.fn().mockResolvedValue({ matches: allMatches }),
+    } as unknown as VectorizeIndex;
+
+    const contiguousDocs = Array.from({ length: 15 }, (_, i) => ({
+      id: `doc_bemm#chunk_${i + 1}`,
+      document_id: "doc_bemm",
+      document_title: "Ford Transit BEMM",
+      category: "chassis",
+      manufacturer: "ford",
+      model: "transit",
+      market: "us",
+      metadata_json: "{}",
+      applicable_chassis: "transit",
+      page_number: Math.floor(i / 2) + 1,
+      section_title: `Section ${i + 1}`,
+      subsystem: "12v_dc",
+      chunk_text:
+        i === 0
+          ? "Customer connection points overview: refer to the following figures and tables."
+          : `Details for chunk ${i + 1}.`,
+      schematic_r2_key: null,
+      schematic_caption: null,
+    }));
+
+    const db = {
+      prepare: vi.fn().mockReturnValue({
+        bind: vi.fn().mockReturnValue({
+          all: vi.fn().mockResolvedValue({ results: contiguousDocs }),
+        }),
+      }),
+    } as unknown as D1Database;
+
+    registerManualTools(mcp, vectorIndex, undefined, db);
+
+    const registeredTools = (
+      mcp as unknown as {
+        _registeredTools: Record<
+          string,
+          { handler: (...args: unknown[]) => Promise<{ content: Array<{ type: string; text: string }> }> }
+        >;
+      }
+    )._registeredTools;
+
+    const response = await registeredTools["search_van_manuals"].handler({
+      query: "Customer Connection Points CCP1 CCP2 driver seat",
+    });
+
+    const parsed = JSON.parse(response.content[0].text);
+    expect(parsed.count).toBe(8);
+    expect(parsed.results.length).toBe(8);
+    expect(parsed.results[0].text).toContain("Customer connection points overview");
+    expect(parsed.results[0].text).toContain("[Continuation from next section/table");
+  });
 });

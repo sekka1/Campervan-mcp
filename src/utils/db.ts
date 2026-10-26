@@ -459,6 +459,7 @@ export async function hydrateChunks(
     siblingIdsToFetch.delete(existingId);
   }
 
+  const sibMap = new Map<string, HydratedChunk>();
   if (siblingIdsToFetch.size > 0) {
     const sibPlaceholders = Array.from(siblingIdsToFetch).map(() => "?").join(", ");
     const sibQuery = `SELECT c.id, c.document_id, d.title AS document_title,
@@ -476,44 +477,43 @@ export async function hydrateChunks(
 
     try {
       const sibResults = await db.prepare(sibQuery).bind(...Array.from(siblingIdsToFetch)).all<HydratedChunk>();
-      const sibMap = new Map<string, HydratedChunk>();
       for (const row of sibResults.results ?? []) {
         sibMap.set(row.id, row);
       }
+    } catch (err) {
+      console.warn("Forward continuation hydration failed:", err);
+    }
+  }
 
-      for (const chunk of primaryChunks) {
-        const parsed = chunk.id.match(/^(.+)#chunk_(\d+)$/);
-        if (!parsed) continue;
-        const docPrefix = parsed[1]!;
-        const idx = parseInt(parsed[2]!, 10);
-        const sib1 = sibMap.get(`${docPrefix}#chunk_${idx + 1}`) ?? map.get(`${docPrefix}#chunk_${idx + 1}`);
+  for (const chunk of primaryChunks) {
+    const parsed = chunk.id.match(/^(.+)#chunk_(\d+)$/);
+    if (!parsed) continue;
+    const docPrefix = parsed[1]!;
+    const idx = parseInt(parsed[2]!, 10);
+    const sib1 = sibMap.get(`${docPrefix}#chunk_${idx + 1}`) ?? map.get(`${docPrefix}#chunk_${idx + 1}`);
 
-        if (sib1 && sib1.document_id === chunk.document_id) {
-          const sectionLabel = sib1.section_title ? ` (${sib1.section_title})` : "";
-          chunk.chunk_text += `\n\n[Continuation from next section/table${sectionLabel}]:\n${sib1.chunk_text}`;
+    if (sib1 && sib1.document_id === chunk.document_id) {
+      const sectionLabel = sib1.section_title ? ` (${sib1.section_title})` : "";
+      chunk.chunk_text += `\n\n[Continuation from next section/table${sectionLabel}]:\n${sib1.chunk_text}`;
 
-          if (!chunk.schematic_r2_key && sib1.schematic_r2_key) {
-            chunk.schematic_r2_key = sib1.schematic_r2_key;
-            chunk.schematic_caption = sib1.schematic_caption;
-          }
+      if (!chunk.schematic_r2_key && sib1.schematic_r2_key) {
+        chunk.schematic_r2_key = sib1.schematic_r2_key;
+        chunk.schematic_caption = sib1.schematic_caption;
+      }
 
-          const hasContinuationCue = CONTINUATION_CUE_REGEX.test(chunk.chunk_text);
-          const sharesPage = sib1.page_number === chunk.page_number;
-          if (hasContinuationCue || sharesPage) {
-            const sib2 = sibMap.get(`${docPrefix}#chunk_${idx + 2}`) ?? map.get(`${docPrefix}#chunk_${idx + 2}`);
-            if (sib2 && sib2.document_id === chunk.document_id) {
-              const sec2Label = sib2.section_title ? ` (${sib2.section_title})` : "";
-              chunk.chunk_text += `\n\n[Continuation${sec2Label}]:\n${sib2.chunk_text}`;
-              if (!chunk.schematic_r2_key && sib2.schematic_r2_key) {
-                chunk.schematic_r2_key = sib2.schematic_r2_key;
-                chunk.schematic_caption = sib2.schematic_caption;
-              }
-            }
+      const hasContinuationCue = CONTINUATION_CUE_REGEX.test(chunk.chunk_text);
+      const sharesPage = sib1.page_number === chunk.page_number;
+      if (hasContinuationCue || sharesPage) {
+        const sib2 = sibMap.get(`${docPrefix}#chunk_${idx + 2}`) ?? map.get(`${docPrefix}#chunk_${idx + 2}`);
+        if (sib2 && sib2.document_id === chunk.document_id) {
+          const sec2Label = sib2.section_title ? ` (${sib2.section_title})` : "";
+          chunk.chunk_text += `\n\n[Continuation${sec2Label}]:\n${sib2.chunk_text}`;
+          if (!chunk.schematic_r2_key && sib2.schematic_r2_key) {
+            chunk.schematic_r2_key = sib2.schematic_r2_key;
+            chunk.schematic_caption = sib2.schematic_caption;
           }
         }
       }
-    } catch (err) {
-      console.warn("Forward continuation hydration failed:", err);
     }
   }
 
@@ -692,5 +692,6 @@ export async function hybridSearch(
         : {}),
       ...(h.schematic_caption ? { schematic_caption: h.schematic_caption } : {}),
     };
-  });
+  })
+  .slice(0, options.topK ?? 8);
 }
