@@ -64,6 +64,43 @@ export const CHUNK_OVERLAP_CHARS = 50;
 /** Word-based chunking used for the D1 + Vectorize hybrid index. */
 export const CHUNK_SIZE_WORDS = 500;
 export const CHUNK_OVERLAP_WORDS = 100;
+/** Maximum character length for a single text chunk before hard-splitting. */
+export const MAX_CHUNK_CHARACTERS = 3000;
+/** Maximum allowed UTF-8 bytes for serialized Vectorize metadata (hard limit is 10,240). */
+export const MAX_VECTORIZE_METADATA_BYTES = 9500;
+
+/**
+ * Enforces a strict UTF-8 byte cap on serialized Vectorize metadata (hard limit 10,240 bytes).
+ * Progressively trims metadata.text while preserving multi-byte UTF-8 characters and JSON validity.
+ */
+export function capVectorMetadataBytes(
+  metadata: Record<string, unknown>,
+  maxBytes: number = MAX_VECTORIZE_METADATA_BYTES
+): Record<string, unknown> {
+  const metaCopy = { ...metadata };
+  if (typeof metaCopy.text !== "string") {
+    return metaCopy;
+  }
+
+  let jsonStr = JSON.stringify(metaCopy);
+  let currentBytes = Buffer.byteLength(jsonStr, "utf8");
+
+  if (currentBytes <= maxBytes) {
+    return metaCopy;
+  }
+
+  let text = metaCopy.text;
+  while (currentBytes > maxBytes && text.length > 0) {
+    const excess = currentBytes - maxBytes;
+    const charsToRemove = Math.max(10, Math.ceil(excess / 2));
+    text = text.slice(0, Math.max(0, text.length - charsToRemove));
+    metaCopy.text = text;
+    jsonStr = JSON.stringify(metaCopy);
+    currentBytes = Buffer.byteLength(jsonStr, "utf8");
+  }
+
+  return metaCopy;
+}
 
 /** Rough tokens-per-word ratio used to estimate `token_count` for D1 chunk rows. */
 export const TOKENS_PER_WORD = 1.3;
@@ -374,14 +411,44 @@ export function splitTextByWords(
     return [];
   }
   const step = Math.max(1, chunkSize - overlap);
-  const chunks: string[] = [];
+  const rawChunks: string[] = [];
   for (let start = 0; start < words.length; start += step) {
-    chunks.push(words.slice(start, start + chunkSize).join(" "));
+    rawChunks.push(words.slice(start, start + chunkSize).join(" "));
     if (start + chunkSize >= words.length) {
       break;
     }
   }
-  return chunks;
+
+  // Hard-split oversized single blocks (e.g. dense Table of Contents or long blocks)
+  // so no individual chunk exceeds MAX_CHUNK_CHARACTERS (3,000 chars)
+  const boundedChunks: string[] = [];
+  for (const chunk of rawChunks) {
+    if (chunk.length <= MAX_CHUNK_CHARACTERS) {
+      boundedChunks.push(chunk);
+    } else {
+      const subChunkOverlap = 200;
+      let pos = 0;
+      while (pos < chunk.length) {
+        let end = Math.min(pos + MAX_CHUNK_CHARACTERS, chunk.length);
+        if (end < chunk.length) {
+          const lastNewline = chunk.lastIndexOf("\n", end);
+          if (lastNewline > pos + MAX_CHUNK_CHARACTERS * 0.7) {
+            end = lastNewline + 1;
+          } else {
+            const lastSpace = chunk.lastIndexOf(" ", end);
+            if (lastSpace > pos + MAX_CHUNK_CHARACTERS * 0.7) {
+              end = lastSpace + 1;
+            }
+          }
+        }
+        boundedChunks.push(chunk.slice(pos, end).trim());
+        if (end >= chunk.length) break;
+        pos = Math.max(pos + 1, end - subChunkOverlap);
+      }
+    }
+  }
+
+  return boundedChunks.filter((c) => c.length > 0);
 }
 
 export interface BuildChunksInput {
@@ -512,7 +579,14 @@ export async function upsertVectors(
     return;
   }
 
-  const ndjson = vectors.map((v) => JSON.stringify(v)).join("\n");
+  const ndjson = vectors
+    .map((v) => {
+      const cappedMetadata = v.metadata
+        ? capVectorMetadataBytes(v.metadata as Record<string, unknown>)
+        : v.metadata;
+      return JSON.stringify({ ...v, metadata: cappedMetadata });
+    })
+    .join("\n");
 
   const response = await fetch(
     `${CLOUDFLARE_API_BASE}/${accountId}/vectorize/v2/indexes/${indexName}/upsert`,
