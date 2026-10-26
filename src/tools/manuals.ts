@@ -113,6 +113,7 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
         ...(args.model ? { model: args.model } : {}),
         ...(args.market ? { market: args.market } : {}),
         ...(args.model_year !== undefined ? { model_year: args.model_year } : {}),
+        queryText: args.query,
       });
 
       const appliedFilters = {
