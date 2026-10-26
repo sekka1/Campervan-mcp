@@ -114,9 +114,21 @@ Before committing or submitting a PR, agents must ensure all quality gates pass:
    - Technical questions are tokenized by stripping standard English stop words (`where`, `what`, `are`, `the`, `for`, `and`, `with`, `regarding`, etc.) into distinct keywords of length >= 3.
    - D1 ranks chunks by multi-token match count across `chunk_text` and `section_title`.
    - Vector similarity ranks and keyword match ranks are fused via Reciprocal Rank Fusion (`RRF score = 1 / (60 + rank)`), ensuring multi-part questions retrieve chunks covering all parts of the user prompt.
-3. **Resilient Metadata Filtering:**
-   - Filters on `manufacturer` and `model` use bidirectional substring matching (`= ? OR ? LIKE "%" || col || "%" OR col LIKE "%" || ? || "%"`), so `"Ford Transit"` matches `"transit"`.
-   - If optional metadata filters (`category`, `manufacturer`, `model`, `subsystem`, `chassis`) produce `0` rows for non-empty vector candidates, `hydrateChunks` and `hybridSearch` automatically fall back to unfiltered retrieval (preserving only `market` and `model_year`) so over-specific filter guesses never drop valid semantic matches.
+3. **Progressive (Stepwise) Filter Relaxation:**
+   - Filters relax in strict priority stages to prevent over-specific guesses (e.g. `category: "power"` on a chassis BEMM) from discarding relevant chunks or dropping all filters at once:
+     - **Stage 1:** All provided filters (`category`, `subsystem`, `manufacturer`, `model`, `chassis`, `market`, `model_year`).
+     - **Stage 2:** Drop `category` and `subsystem`, retaining `manufacturer`, `model`, `chassis`, `market`, and `model_year`.
+     - **Stage 3:** Drop `chassis` and `model`, retaining `manufacturer`, `market`, and `model_year`.
+     - **Stage 4:** Retain only `market` and `model_year`.
+   - In model matching, exact model matches (`LOWER(model) = ?`, e.g. `"transit"`) are prioritized ahead of substring/prefix matches (`"transit_custom"`).
+4. **Canonical Document Naming & R2 Object Renaming:**
+   - Whenever manuals with cryptic vendor names (e.g., `2025-06.pdf`, `2027-eu-transit.pdf`) are ingested, `buildCanonicalManualName()` derives:
+     - An unambiguous human-readable `documentTitle`: e.g. `"2025 Mercedes-Benz Sprinter (US, BM907)"`, `"2026 Ford Transit Custom (EU)"`, `"2027 Ford Transit (US)"`.
+     - A clean canonical R2 key slug: e.g. `2025-mercedes-benz-sprinter-us-bm907.pdf`.
+   - In `sync-r2-manuals.ts`, objects are renamed via `CopyObjectCommand` + `DeleteObjectCommand` *before* generating chunk IDs, schematics, and D1 rows, and the canonical key is recorded in `manuals_manifest.json`.
+   - At query time in `src/utils/db.ts`, chunks are enriched dynamically with canonical titles, `model_year`, `market`, and `model`.
+5. **Cross-Edition Near-Duplicate Deduplication:**
+   - When `model_year` is not specified, identical or near-identical chunks (>= 0.80 normalized token overlap) across different model years of the same vehicle family are deduplicated, keeping the chunk from the newest `year_start` edition.
 
 ## 4. Testing & Promptfoo Live Evaluation
 

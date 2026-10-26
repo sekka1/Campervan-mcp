@@ -35,6 +35,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  CopyObjectCommand,
+  DeleteObjectCommand,
   GetObjectCommand,
   ListObjectsV2Command,
   NoSuchKey,
@@ -43,12 +45,13 @@ import {
   type _Object,
 } from "@aws-sdk/client-s3";
 import { extractText, getDocumentProxy } from "unpdf";
-import { extractCoverPageText, extractDocumentMetadata } from "./metadata";
+import { extractCoverPageText, extractDocumentMetadata, type UniversalMetadata } from "./metadata";
 import {
   batchArray,
   buildChunksFromPages,
   buildD1DeleteStatements,
   buildD1UpsertStatements,
+  buildCanonicalManualName,
   buildDocumentRecord,
   executeD1Statements,
   extractSchematics,
@@ -302,31 +305,68 @@ export async function processAddedModifiedR2Object(
   apiToken: string,
   dryRun: boolean,
   d1DatabaseId?: string
-): Promise<number> {
+): Promise<{ chunkCount: number; canonicalKey: string; oldKey?: string }> {
   const tempPath = await downloadR2ObjectToTemp(r2Client, bucket, key);
 
+  let effectiveKey = key;
   let chunks: ManualChunk[];
   let schematics: EncodedSchematic[] = [];
   let coverPageText = "";
+  let metadata: UniversalMetadata;
+  let documentTitle: string;
+
   try {
     const buffer = readFileSync(tempPath);
     const pdf = await getDocumentProxy(new Uint8Array(buffer), { verbosity: PDF_PARSE_VERBOSITY });
     const { text } = await extractText(pdf, { mergePages: false });
     coverPageText = extractCoverPageText(text);
-    chunks = buildR2ManualChunks(key, text);
+
+    metadata = await extractDocumentMetadata(key, coverPageText);
+    const canonical = buildCanonicalManualName(metadata, key);
+    documentTitle = canonical.documentTitle;
+
+    // R2 Object Renaming:
+    // If filename is cryptic and differs from canonical key, rename in R2 BEFORE generating chunk IDs and schematics
+    if (canonical.canonicalKey !== key && !dryRun) {
+      console.log(`Renaming R2 object "${key}" -> "${canonical.canonicalKey}"...`);
+      try {
+        await r2Client.send(
+          new CopyObjectCommand({
+            Bucket: bucket,
+            CopySource: `${bucket}/${key.split("/").map(encodeURIComponent).join("/")}`,
+            Key: canonical.canonicalKey,
+          })
+        );
+        await r2Client.send(
+          new DeleteObjectCommand({
+            Bucket: bucket,
+            Key: key,
+          })
+        );
+        effectiveKey = canonical.canonicalKey;
+      } catch (renameErr) {
+        console.warn(`Failed to rename R2 object "${key}" -> "${canonical.canonicalKey}":`, renameErr);
+      }
+    }
+
+    chunks = buildR2ManualChunks(effectiveKey, text);
     if (d1DatabaseId) {
-      schematics = await extractSchematics(pdf, sanitizeR2Key(key), deriveManualTitleFromKey(key), chunks);
+      schematics = await extractSchematics(pdf, sanitizeR2Key(effectiveKey), documentTitle, chunks);
     }
   } finally {
     // Clean up the temporary file (and its containing directory) immediately.
     rmSync(join(tempPath, ".."), { recursive: true, force: true });
   }
 
-  console.log(`Parsed "${key}" into ${chunks.length} chunks`);
+  console.log(`Parsed "${effectiveKey}" into ${chunks.length} chunks`);
 
   if (dryRun) {
-    console.log(`[dry-run] Skipping embedding/upsert for "${key}"`);
-    return chunks.length;
+    console.log(`[dry-run] Skipping embedding/upsert for "${effectiveKey}"`);
+    return {
+      chunkCount: chunks.length,
+      canonicalKey: effectiveKey,
+      oldKey: effectiveKey !== key ? key : undefined,
+    };
   }
 
   for (const batch of batchArray(chunks, EMBEDDING_BATCH_SIZE)) {
@@ -335,13 +375,11 @@ export async function processAddedModifiedR2Object(
       accountId,
       apiToken
     );
-
     const vectors: VectorizeVector[] = batch.map((chunk, idx) => ({
       id: chunk.id,
       values: embeddings[idx],
       metadata: chunk.metadata as unknown as Record<string, unknown>,
     }));
-
     for (const vectorBatch of batchArray(vectors, VECTORIZE_BATCH_SIZE)) {
       await upsertVectors(accountId, apiToken, vectorBatch);
     }
@@ -353,11 +391,10 @@ export async function processAddedModifiedR2Object(
         new PutObjectCommand({ Bucket: bucket, Key: schematicKey, Body: bytes, ContentType: contentType })
       );
     });
-    const metadata = await extractDocumentMetadata(key, coverPageText);
     console.log(
-      `Classified "${key}" -> category=${metadata.category}, manufacturer=${metadata.manufacturer}, model=${metadata.model}, market=${metadata.market}, metadata=${metadata.metadata_json}`
+      `Classified "${effectiveKey}" -> category=${metadata.category}, manufacturer=${metadata.manufacturer}, model=${metadata.model}, market=${metadata.market}, metadata=${metadata.metadata_json}`
     );
-    const doc = buildDocumentRecord(sanitizeR2Key(key), deriveManualTitleFromKey(key), key, key, metadata);
+    const doc = buildDocumentRecord(sanitizeR2Key(effectiveKey), documentTitle, effectiveKey, effectiveKey, metadata);
     await executeD1Statements(
       accountId,
       apiToken,
@@ -366,9 +403,14 @@ export async function processAddedModifiedR2Object(
     );
   }
 
-  console.log(`✓ Ingested ${chunks.length} chunks from "${key}"`);
-  return chunks.length;
+  console.log(`✓ Ingested ${chunks.length} chunks from "${effectiveKey}"`);
+  return {
+    chunkCount: chunks.length,
+    canonicalKey: effectiveKey,
+    oldKey: effectiveKey !== key ? key : undefined,
+  };
 }
+
 
 // ---------------------------------------------------------------------------
 // CLI Argument / Environment Parsing
@@ -444,7 +486,7 @@ export async function runSync(options: SyncOptions): Promise<void> {
     const obj = delta.addedOrModified[i]!;
     console.log(`Processing [${i + 1}/${total}]: "${obj.key}"...`);
     try {
-      const chunkCount = await processAddedModifiedR2Object(
+      const result = await processAddedModifiedR2Object(
         r2Client,
         R2_BUCKET_NAME,
         obj.key,
@@ -453,7 +495,10 @@ export async function runSync(options: SyncOptions): Promise<void> {
         dryRun,
         d1DatabaseId
       );
-      updatedManifest[obj.key] = { etag: obj.etag, chunkCount };
+      if (result.oldKey) {
+        delete updatedManifest[result.oldKey];
+      }
+      updatedManifest[result.canonicalKey] = { etag: obj.etag, chunkCount: result.chunkCount };
     } catch (err: unknown) {
       console.error(
         `Error processing "${obj.key}":`,

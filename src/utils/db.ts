@@ -218,7 +218,7 @@ export interface HydrateFilterOptions {
  * (the IDs returned by the Vectorize kNN query).
  */
 export const CONTINUATION_CUE_REGEX =
-  /(?:refer to|following|table|figure|see figure|see table|see below|details below)/i;
+  /(?:refer to the following|diagrams that follow|table that follows|following figures|refer to|following|table|figure|see figure|see table|see below|details below|ground points|grounding)/i;
 
 export const ENGLISH_STOP_WORDS: ReadonlySet<string> = new Set([
   "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", "any", "are",
@@ -345,6 +345,146 @@ export async function searchD1KeywordCandidates(
   }
 }
 
+export function formatDisplayName(val: string): string {
+  const lower = val.toLowerCase().trim();
+  if (lower === "ford") return "Ford";
+  if (lower === "mercedes-benz" || lower === "mercedes") return "Mercedes-Benz";
+  if (lower === "ram") return "Ram";
+  if (lower === "transit") return "Transit";
+  if (lower === "transit_custom" || lower === "transit-custom") return "Transit Custom";
+  if (lower === "sprinter") return "Sprinter";
+  if (lower === "promaster") return "ProMaster";
+  return val
+    .replace(/[-_]+/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+export function buildCanonicalTitle(doc: {
+  document_title?: string | null;
+  manufacturer?: string | null;
+  model?: string | null;
+  market?: string | null;
+  metadata_json?: string | null;
+}): string {
+  if (!doc.manufacturer || !doc.model) {
+    return doc.document_title || "Unknown Manual";
+  }
+
+  let yearStart: number | undefined;
+  let yearEnd: number | undefined;
+  let chassisCode: string | undefined;
+
+  if (doc.metadata_json) {
+    try {
+      const parsed = typeof doc.metadata_json === "string" ? JSON.parse(doc.metadata_json) : doc.metadata_json;
+      if (parsed) {
+        if (parsed.year_start) yearStart = Number(parsed.year_start);
+        if (parsed.year_end) yearEnd = Number(parsed.year_end);
+        if (parsed.chassis_code) chassisCode = String(parsed.chassis_code);
+      }
+    } catch {}
+  }
+
+  const mfg = formatDisplayName(doc.manufacturer);
+  const mdl = formatDisplayName(doc.model);
+  const mkt = (doc.market || "global").toUpperCase();
+  const yearStr = yearStart
+    ? yearEnd && yearEnd !== yearStart
+      ? `${yearStart}-${yearEnd}`
+      : `${yearStart}`
+    : "";
+  const codeStr = chassisCode ? `, ${chassisCode}` : "";
+
+  const titleCore = `${mfg} ${mdl} (${mkt}${codeStr})`;
+  const canonical = yearStr ? `${yearStr} ${titleCore}` : titleCore;
+
+  if (doc.document_title && !doc.document_title.toLowerCase().includes(doc.model.toLowerCase())) {
+    return `${canonical} [${doc.document_title}]`;
+  }
+  return canonical;
+}
+
+export function normalizeChunkForDedup(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/date of publication:\s*\d{1,2}\/\d{2,4}/gi, "")
+    .replace(/page\s*\d+/gi, "")
+    .replace(/chunk\s*\d+/gi, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function computeTokenOverlap(textA: string, textB: string): number {
+  const tokensA = new Set(textA.split(" ").filter((w) => w.length >= 3));
+  const tokensB = new Set(textB.split(" ").filter((w) => w.length >= 3));
+  if (tokensA.size === 0 || tokensB.size === 0) return 0;
+
+  let intersection = 0;
+  for (const token of tokensA) {
+    if (tokensB.has(token)) intersection++;
+  }
+  const minSize = Math.min(tokensA.size, tokensB.size);
+  return intersection / minSize;
+}
+
+export function deduplicateCrossEditionChunks(
+  chunks: HybridSearchResult[]
+): HybridSearchResult[] {
+  const result: HybridSearchResult[] = [];
+
+  for (const current of chunks) {
+    const normCurrent = normalizeChunkForDedup(current.text);
+    const mfg = (current.manufacturer || "").toLowerCase();
+    const mdl = (current.model || "").toLowerCase();
+    const mkt = (current.market || "").toLowerCase();
+    const curYear = current.model_year || 0;
+
+    let duplicateIndex = -1;
+    for (let i = 0; i < result.length; i++) {
+      const existing = result[i]!;
+      const exMfg = (existing.manufacturer || "").toLowerCase();
+      const exMdl = (existing.model || "").toLowerCase();
+      const exMkt = (existing.market || "").toLowerCase();
+      const exYear = existing.model_year || 0;
+
+      // Only deduplicate between DIFFERENT model years of the same vehicle family & market
+      if (
+        mfg &&
+        exMfg &&
+        mfg === exMfg &&
+        mdl === exMdl &&
+        mkt === exMkt &&
+        curYear !== exYear &&
+        curYear > 0 &&
+        exYear > 0
+      ) {
+        const normExisting = normalizeChunkForDedup(existing.text);
+        const overlap = computeTokenOverlap(normCurrent, normExisting);
+        if (overlap >= 0.80) {
+          duplicateIndex = i;
+          break;
+        }
+      }
+    }
+
+    if (duplicateIndex === -1) {
+      result.push(current);
+    } else {
+      const existing = result[duplicateIndex]!;
+      const exYear = existing.model_year || 0;
+      if (curYear > exYear) {
+        result[duplicateIndex] = current;
+      }
+    }
+  }
+
+  return result;
+}
+
 export async function hydrateChunks(
   db: D1Database,
   ids: string[],
@@ -408,52 +548,51 @@ export async function hydrateChunks(
     return { query, params };
   };
 
-  const { query, params } = buildQueryAndParams(filters);
-  const { results } = await db
-    .prepare(query)
-    .bind(...params)
-    .all<HydratedChunk>();
+  // Progressive (Stepwise) Filter Relaxation:
+  // Stage 1: All filters (category, manufacturer, model, market, model_year)
+  // Stage 2: Drop category (keep manufacturer, model, market, model_year)
+  // Stage 3: Drop model (keep manufacturer, market, model_year)
+  // Stage 4: Keep only market and model_year
+  const stages: HydrateFilterOptions[] = [
+    filters,
+    { manufacturer: filters.manufacturer, model: filters.model, market: filters.market, model_year: filters.model_year },
+    { manufacturer: filters.manufacturer, market: filters.market, model_year: filters.model_year },
+    { market: filters.market, model_year: filters.model_year },
+  ];
 
-  for (const row of results ?? []) map.set(row.id, row);
-
-  // Automatic Unfiltered Fallback:
-  // If restrictive metadata filters (category, manufacturer, model) produced 0 rows,
-  // re-run the hydration query without those restrictive filters (preserving market and model_year)
-  // so LLM filter over-specification does not drop valid semantic search hits.
-  const hasRestrictiveFilters = Boolean(filters.category || filters.manufacturer || filters.model);
-  if (map.size === 0 && hasRestrictiveFilters) {
-    const fallbackFilters: HydrateFilterOptions = {
-      market: filters.market,
-      model_year: filters.model_year,
-    };
-    const fallback = buildQueryAndParams(fallbackFilters);
-    const fallbackResults = await db
-      .prepare(fallback.query)
-      .bind(...fallback.params)
+  for (const stageFilters of stages) {
+    const { query, params } = buildQueryAndParams(stageFilters);
+    const { results } = await db
+      .prepare(query)
+      .bind(...params)
       .all<HydratedChunk>();
 
-    for (const row of fallbackResults.results ?? []) map.set(row.id, row);
+    if (results && results.length > 0) {
+      for (const row of results) map.set(row.id, row);
+      break;
+    }
   }
 
   // Forward Neighbor / Continuation Chunk Expansion:
-  // For top primary hits (up to top 3), identify forward sibling chunks (#chunk_{index+1}, #chunk_{index+2})
-  // and append continuation text so specification tables or rules following headings are included.
+  // For top primary hits (up to 3) and ANY chunk containing figure/table/grounding continuation cues,
+  // automatically fetch and append forward sibling chunks (#chunk_{index+1}, #chunk_{index+2}).
   const siblingIdsToFetch = new Set<string>();
-  const topIds = ids.slice(0, 3);
-  const primaryChunks = topIds.map((id) => map.get(id)).filter((c): c is HydratedChunk => Boolean(c));
+  const allPrimaryChunks = ids.map((id) => map.get(id)).filter((c): c is HydratedChunk => Boolean(c));
 
-  for (const chunk of primaryChunks) {
+  allPrimaryChunks.forEach((chunk, index) => {
     const parsed = chunk.id.match(/^(.+)#chunk_(\d+)$/);
-    if (!parsed) continue;
+    if (!parsed) return;
     const docPrefix = parsed[1]!;
     const idx = parseInt(parsed[2]!, 10);
-    siblingIdsToFetch.add(`${docPrefix}#chunk_${idx + 1}`);
+    const hasCue =
+      CONTINUATION_CUE_REGEX.test(chunk.chunk_text) ||
+      CONTINUATION_CUE_REGEX.test(chunk.section_title || "");
 
-    const hasContinuationCue = CONTINUATION_CUE_REGEX.test(chunk.chunk_text);
-    if (hasContinuationCue) {
+    if (index < 3 || hasCue) {
+      siblingIdsToFetch.add(`${docPrefix}#chunk_${idx + 1}`);
       siblingIdsToFetch.add(`${docPrefix}#chunk_${idx + 2}`);
     }
-  }
+  });
 
   for (const existingId of map.keys()) {
     siblingIdsToFetch.delete(existingId);
@@ -485,7 +624,7 @@ export async function hydrateChunks(
     }
   }
 
-  for (const chunk of primaryChunks) {
+  for (const chunk of allPrimaryChunks) {
     const parsed = chunk.id.match(/^(.+)#chunk_(\d+)$/);
     if (!parsed) continue;
     const docPrefix = parsed[1]!;
@@ -538,6 +677,7 @@ export interface HybridSearchResult {
   schematic_markdown?: string;
   model?: string;
   market?: string;
+  model_year?: number;
   metadata_json?: string;
 }
 
@@ -651,7 +791,7 @@ export async function hybridSearch(
       options.model_year !== undefined
   );
 
-  return matches
+  let mappedResults = matches
     .filter((m) => {
       if (hasFilters && db) {
         return hydrated.has(m.id);
@@ -663,7 +803,26 @@ export async function hybridSearch(
     if (!h) {
       return { id: m.id, score: m.score, source: m.metadata.source, page: m.metadata.page, section: m.metadata.section, text: m.metadata.text };
     }
-    const sourceName = m.metadata.source && m.metadata.source !== "unknown" ? m.metadata.source : h.document_title;
+    let modelYear: number | undefined;
+    if (h.metadata_json) {
+      try {
+        const metaObj = typeof h.metadata_json === "string" ? JSON.parse(h.metadata_json) : h.metadata_json;
+        if (metaObj?.year_start) {
+          modelYear = Number(metaObj.year_start);
+        }
+      } catch {}
+    }
+
+    const canonicalTitle = buildCanonicalTitle({
+      document_title: h.document_title,
+      manufacturer: h.manufacturer,
+      model: h.model,
+      market: h.market,
+      metadata_json: h.metadata_json,
+    });
+
+    const sourceName = canonicalTitle || (m.metadata.source && m.metadata.source !== "unknown" ? m.metadata.source : h.document_title);
+
     return {
       id: m.id,
       score: m.score,
@@ -671,13 +830,14 @@ export async function hybridSearch(
       page: h.page_number,
       section: h.section_title ?? undefined,
       text: h.chunk_text,
-      document_title: h.document_title,
+      document_title: canonicalTitle,
       category: h.category,
       manufacturer: h.manufacturer,
       applicable_chassis: h.applicable_chassis,
       subsystem: h.subsystem,
       model: h.model ?? undefined,
       market: h.market ?? undefined,
+      model_year: modelYear,
       metadata_json: h.metadata_json ?? undefined,
       ...(h.schematic_r2_key ? { schematic_r2_key: h.schematic_r2_key } : {}),
       ...(h.schematic_r2_key && options.cdnBaseUrl
@@ -693,5 +853,11 @@ export async function hybridSearch(
       ...(h.schematic_caption ? { schematic_caption: h.schematic_caption } : {}),
     };
   })
-  .slice(0, options.topK ?? 8);
+  ;
+
+  if (options.model_year === undefined) {
+    mappedResults = deduplicateCrossEditionChunks(mappedResults);
+  }
+
+  return mappedResults.slice(0, options.topK ?? 8);
 }

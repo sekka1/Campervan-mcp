@@ -703,6 +703,90 @@ export function getD1DatabaseId(env: NodeJS.ProcessEnv = process.env): string | 
 }
 
 /** Builds a D1 document record (provenance row) for a manual path. */
+export interface CanonicalManualName {
+  documentTitle: string;
+  canonicalKey: string;
+}
+
+export function formatDisplayName(val: string): string {
+  const lower = val.toLowerCase().trim();
+  if (lower === "ford") return "Ford";
+  if (lower === "mercedes-benz" || lower === "mercedes") return "Mercedes-Benz";
+  if (lower === "ram") return "Ram";
+  if (lower === "transit") return "Transit";
+  if (lower === "transit_custom" || lower === "transit-custom") return "Transit Custom";
+  if (lower === "sprinter") return "Sprinter";
+  if (lower === "promaster") return "ProMaster";
+  return val
+    .replace(/[-_]+/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+export function buildCanonicalManualName(
+  meta?: UniversalMetadata | { manufacturer?: string; model?: string; market?: string; metadata?: Record<string, unknown>; metadata_json?: Record<string, unknown> | string } | null,
+  fallbackFilename: string = "manual.pdf"
+): CanonicalManualName {
+  const dir = fallbackFilename.includes("/") ? fallbackFilename.slice(0, fallbackFilename.lastIndexOf("/")) : "";
+  const baseName = fallbackFilename.split("/").pop() ?? fallbackFilename;
+
+  if (!meta || !meta.manufacturer || meta.manufacturer === "unknown" || !meta.model || meta.model === "unknown") {
+    const rawTitle = deriveManualTitle(baseName);
+    return {
+      documentTitle: rawTitle,
+      canonicalKey: fallbackFilename,
+    };
+  }
+
+  let parsedYearStart: number | undefined;
+  let parsedYearEnd: number | undefined;
+  let parsedChassisCode: string | undefined;
+
+  const rawPouch = (meta as { metadata?: unknown }).metadata ?? (meta as { metadata_json?: unknown }).metadata_json;
+  if (rawPouch) {
+    try {
+      const parsed = typeof rawPouch === "string" ? JSON.parse(rawPouch) : rawPouch;
+      if (parsed) {
+        if (parsed.year_start) parsedYearStart = Number(parsed.year_start);
+        if (parsed.year_end) parsedYearEnd = Number(parsed.year_end);
+        if (parsed.chassis_code) parsedChassisCode = String(parsed.chassis_code);
+      }
+    } catch {}
+  }
+
+  const yearStr = parsedYearStart
+    ? parsedYearEnd && parsedYearEnd !== parsedYearStart
+      ? `${parsedYearStart}-${parsedYearEnd}`
+      : `${parsedYearStart}`
+    : "";
+
+  const mfg = formatDisplayName(meta.manufacturer);
+  const mdl = formatDisplayName(meta.model);
+  const mkt = (meta.market || "global").toUpperCase();
+  const chassisCode = parsedChassisCode ? `, ${parsedChassisCode}` : "";
+
+  const titleCore = `${mfg} ${mdl} (${mkt}${chassisCode})`;
+  const documentTitle = yearStr ? `${yearStr} ${titleCore}` : titleCore;
+
+  const slugParts: string[] = [];
+  if (yearStr) slugParts.push(yearStr);
+  slugParts.push(meta.manufacturer.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
+  slugParts.push(meta.model.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
+  slugParts.push((meta.market || "global").toLowerCase().replace(/[^a-z0-9]+/g, "-"));
+  if (parsedChassisCode) {
+    slugParts.push(parsedChassisCode.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
+  }
+  const cleanBase = `${slugParts.filter(Boolean).join("-")}.pdf`;
+  const canonicalKey = dir ? `${dir}/${cleanBase}` : cleanBase;
+
+  return {
+    documentTitle,
+    canonicalKey,
+  };
+}
+
 export function buildDocumentRecord(
   id: string,
   title: string,
@@ -710,9 +794,10 @@ export function buildDocumentRecord(
   rawR2Path: string,
   metadata?: UniversalMetadata
 ): D1DocumentRecord {
+  const canonical = buildCanonicalManualName(metadata, rawR2Path);
   return {
     id,
-    title,
+    title: canonical.documentTitle || title,
     category: metadata?.category ?? classifyD1Category(classificationPath),
     manufacturer: metadata?.manufacturer ?? deriveManufacturer(classificationPath),
     applicableChassis: classifyChassis(classificationPath),

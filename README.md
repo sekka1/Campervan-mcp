@@ -329,10 +329,12 @@ See [`AGENTS.md`](./AGENTS.md) for repository conventions and rules that apply t
 
 ### Universal Retrieval Pipeline & Search Mechanics
 
-The retrieval engine in `src/utils/db.ts` applies three universal, product-agnostic RAG mechanisms:
-1. **Strict `top_k` Contract & Forward Continuation Expansion:** Automatically attaches continuation text from forward sibling chunks (`#chunk_{N+1}`, `#chunk_{N+2}`) to capture split tables and multi-page rules, while strictly guaranteeing `results.length <= top_k` (default `8`).
-2. **Stop-Word-Filtered Multi-Token RRF:** Strips English stop words, scores D1 candidates by distinct technical keyword matches in `chunk_text` and `section_title`, and fuses results with Vectorize kNN using Reciprocal Rank Fusion (RRF).
-3. **Resilient Metadata Filtering:** Relaxes `model` and `manufacturer` using bidirectional substring matching, and automatically falls back to unfiltered hydration if metadata filters yield 0 rows for valid semantic hits.
+The retrieval engine in `src/utils/db.ts` and ingestion pipelines apply robust, product-agnostic RAG mechanisms:
+1. **Strict `top_k` Contract & Table/Figure Continuation Expansion:** Attaches continuation text from forward sibling chunks (`#chunk_{N+1}`, `#chunk_{N+2}`) across all hits with diagram/table cues, while strictly guaranteeing `results.length <= top_k` (default `8`).
+2. **Canonical Document Naming & R2 Renaming:** Normalizes cryptic vendor filenames (e.g. `2025-06.pdf`) into canonical vehicle titles (e.g. `2025 Mercedes-Benz Sprinter (US, BM907)`) in R2, D1, and query results.
+3. **Progressive (Stepwise) Filter Relaxation:** Relaxes filters in 4 measured stages (`category` -> `model` -> `manufacturer` -> `market/year`) so over-specific category guesses never drop valid vehicle chunks.
+4. **Cross-Edition Deduplication:** Automatically deduplicates near-identical chunks across model year editions (>= 0.80 overlap), preserving the latest edition when no year filter is specified.
+5. **Stop-Word-Filtered Multi-Token RRF:** Strips English stop words, scores D1 candidates by distinct technical keyword matches, and fuses rankings with Vectorize via Reciprocal Rank Fusion (RRF).
 
 ### Promptfoo Live Benchmark & 2-Turn Tool Loop
 

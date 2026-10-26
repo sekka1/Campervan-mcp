@@ -136,11 +136,14 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
               applied_filters: appliedFilters,
             }
           : {
-              results: results.map(({ id, source, document_title, manufacturer, ...rest }) => ({
+              results: results.map(({ id, source, document_title, manufacturer, model, market, model_year, ...rest }) => ({
                 chunk_id: id,
                 source: source && source !== "unknown" ? source : (document_title ?? "unknown"),
                 document_title,
                 manufacturer: manufacturer && manufacturer !== "unknown" ? manufacturer : undefined,
+                model: model ?? undefined,
+                market: market ?? undefined,
+                model_year: model_year ?? undefined,
                 ...rest,
               })),
               count: results.length,

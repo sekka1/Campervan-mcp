@@ -28,7 +28,7 @@ vi.mock("unpdf", () => ({
 import { NoSuchKey, S3Client } from "@aws-sdk/client-s3";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { getDocumentProxy } from "unpdf";
-import { PDF_PARSE_VERBOSITY } from "../ingest-manuals";
+import { PDF_PARSE_VERBOSITY, buildCanonicalManualName } from "../ingest-manuals";
 import {
   buildR2DeleteCandidateIds,
   buildR2ManualChunks,
@@ -400,7 +400,7 @@ describe("processAddedModifiedR2Object", () => {
     global.fetch = mockFetch as unknown as typeof fetch;
 
     const client = new S3Client({});
-    const chunkCount = await processAddedModifiedR2Object(
+    const { chunkCount } = await processAddedModifiedR2Object(
       client,
       "campervan-mcp",
       "heaters/velit-2026.pdf",
@@ -428,7 +428,7 @@ describe("processAddedModifiedR2Object", () => {
     global.fetch = mockFetch as unknown as typeof fetch;
 
     const client = new S3Client({});
-    const chunkCount = await processAddedModifiedR2Object(
+    const { chunkCount } = await processAddedModifiedR2Object(
       client,
       "campervan-mcp",
       "electrical/victron/multiplus.pdf",
@@ -623,4 +623,117 @@ describe("runSync", () => {
 
     errorSpy.mockRestore();
   });
+
+describe("buildCanonicalManualName & R2 Object Renaming", () => {
+  it("constructs unambiguous human-readable document titles and clean canonical keys", () => {
+    // 1. Mercedes-Benz Sprinter with chassis_code BM907
+    const mbMeta = {
+      category: "chassis" as const,
+      manufacturer: "mercedes-benz",
+      model: "sprinter",
+      market: "us" as const,
+      metadata: { year_start: 2025, chassis_code: "BM907" },
+      metadata_json: JSON.stringify({ year_start: 2025, chassis_code: "BM907" }),
+    };
+    const mbName = buildCanonicalManualName(mbMeta, "2025-06.pdf");
+    expect(mbName.documentTitle).toBe("2025 Mercedes-Benz Sprinter (US, BM907)");
+    expect(mbName.canonicalKey).toBe("2025-mercedes-benz-sprinter-us-bm907.pdf");
+
+    // 2. EU Ford Transit Custom
+    const tcMeta = {
+      category: "chassis" as const,
+      manufacturer: "ford",
+      model: "transit_custom",
+      market: "eu" as const,
+      metadata: { year_start: 2026 },
+      metadata_json: JSON.stringify({ year_start: 2026 }),
+    };
+    const tcName = buildCanonicalManualName(tcMeta, "manuals/2027-eu-transit.pdf");
+    expect(tcName.documentTitle).toBe("2026 Ford Transit Custom (EU)");
+    expect(tcName.canonicalKey).toBe("manuals/2026-ford-transit-custom-eu.pdf");
+
+    // 3. Fallback when metadata is unknown
+    const fallback = buildCanonicalManualName(null, "misc/unknown_manual.pdf");
+    expect(fallback.documentTitle).toBe("Unknown Manual");
+    expect(fallback.canonicalKey).toBe("misc/unknown_manual.pdf");
+  });
+
+  it("renames cryptic R2 objects via CopyObject + DeleteObject and registers canonical key in manifest", async () => {
+    const prevToken = process.env["DEEPINFRA_TOKEN"];
+    process.env["DEEPINFRA_TOKEN"] = "mock-token";
+    // Cryptic upload: 2025-06.pdf -> 2025-mercedes-benz-sprinter-us-bm907.pdf
+    sendMock
+      .mockResolvedValueOnce({
+        Contents: [{ Key: "2025-06.pdf", ETag: "etag-cryptic" }],
+        IsTruncated: false,
+      }) // list
+      .mockResolvedValueOnce({
+        Body: { transformToString: async () => JSON.stringify({}) },
+      }) // manifest fetch
+      .mockResolvedValueOnce({ Body: { transformToByteArray: async () => new Uint8Array([1, 2, 3]) } }) // download
+      .mockResolvedValueOnce({}) // CopyObjectCommand
+      .mockResolvedValueOnce({}) // DeleteObjectCommand
+      .mockResolvedValueOnce({}); // manifest write
+
+    const mockFetch = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      if (urlStr.includes("/chat/completions")) {
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    category: "chassis",
+                    manufacturer: "mercedes-benz",
+                    model: "sprinter",
+                    market: "us",
+                    metadata: { year_start: 2025, chassis_code: "BM907" },
+                  }),
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (urlStr.includes("/ai/run/")) {
+        const body = JSON.parse(init?.body as string);
+        return new Response(JSON.stringify({ result: { data: body.text.map(() => Array(768).fill(0.1)) } }), {
+          status: 200,
+        });
+      }
+      return new Response("{}", { status: 200 });
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    await runSync({ dryRun: false, forceReindex: false });
+
+    // Verify CopyObjectCommand was sent with correct CopySource and Key
+    const copyCall = sendMock.mock.calls.find((call) => call[0]?.input?.CopySource);
+    expect(copyCall).toBeDefined();
+    expect(copyCall![0].input.CopySource).toContain("2025-06.pdf");
+    expect(copyCall![0].input.Key).toBe("2025-mercedes-benz-sprinter-us-bm907.pdf");
+
+    // Verify DeleteObjectCommand deleted the old cryptic key
+    const deleteCall = sendMock.mock.calls.find((call) => call[0]?.constructor?.name === "DeleteObjectCommand");
+    expect(deleteCall).toBeDefined();
+    expect(deleteCall![0].input.Key).toBe("2025-06.pdf");
+
+    // Verify manifest persisted the canonical key and not the old cryptic key
+    const manifestWriteCall = sendMock.mock.calls.find((call) => {
+      const cmd = call[0];
+      return cmd?.input?.Key === "manuals_manifest.json" || (cmd?.constructor && cmd.constructor.name === "PutObjectCommand");
+    });
+    expect(manifestWriteCall).toBeDefined();
+    const writtenManifest = JSON.parse(manifestWriteCall![0].input.Body);
+    expect(writtenManifest["2025-mercedes-benz-sprinter-us-bm907.pdf"]).toBeDefined();
+    expect(writtenManifest["2025-06.pdf"]).toBeUndefined();
+    if (prevToken) {
+      process.env["DEEPINFRA_TOKEN"] = prevToken;
+    } else {
+      delete process.env["DEEPINFRA_TOKEN"];
+    }
+  });
+});
 });
