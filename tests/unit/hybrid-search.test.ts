@@ -723,4 +723,144 @@ describe("Continuation Expansion on Non-Top-3 Chunks with Table/Diagram Cues", (
     expect(r5?.text).toContain("Point 43: Driver seat pedestal ground stud");
   });
 });
+
+describe("Generic Model Disambiguation, Market Defaults & Exact Chunk ID Deduplication", () => {
+  it("strictly matches exact model so base model queries do not match compound sub-models", async () => {
+    const vec = new Array(768).fill(0.1) as number[];
+    const match1 = { id: "doc_custom#chunk_1", score: 0.90, metadata: { source: "ford", text: "Transit Custom spec" } };
+    const match2 = { id: "doc_base#chunk_1", score: 0.85, metadata: { source: "ford", text: "Full size Transit spec" } };
+    const { index } = makeIndex([match1, match2]);
+
+    const customChunk = {
+      id: "doc_custom#chunk_1",
+      document_id: "doc_custom",
+      document_title: "Ford Transit Custom BEMM",
+      category: "chassis",
+      manufacturer: "ford",
+      model: "transit_custom",
+      market: "eu",
+      metadata_json: JSON.stringify({ year_start: 2026 }),
+      applicable_chassis: "transit",
+      page_number: 10,
+      section_title: "Electrical",
+      subsystem: "12v_dc",
+      chunk_text: "Transit Custom 250A alternator limit.",
+      schematic_r2_key: null,
+      schematic_caption: null,
+    };
+
+    const baseChunk = {
+      id: "doc_base#chunk_1",
+      document_id: "doc_base",
+      document_title: "Ford Transit BEMM",
+      category: "chassis",
+      manufacturer: "ford",
+      model: "transit",
+      market: "us",
+      metadata_json: JSON.stringify({ year_start: 2027 }),
+      applicable_chassis: "transit",
+      page_number: 20,
+      section_title: "Electrical",
+      subsystem: "12v_dc",
+      chunk_text: "Ford Transit CCP2 175A auxiliary connection point.",
+      schematic_r2_key: null,
+      schematic_caption: null,
+    };
+
+    const { db } = makeDb([], [baseChunk, customChunk]);
+
+    // Query for base model "transit": exact model must rank ahead of compound sub-model
+    const results = await hybridSearch(index, db, vec, {
+      manufacturer: "ford",
+      model: "transit",
+    });
+
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]?.id).toBe("doc_base#chunk_1");
+    expect(results[0]?.model).toBe("transit");
+  });
+
+  it("applies default US market ranking when no market filter is specified", async () => {
+    const vec = new Array(768).fill(0.1) as number[];
+    const matchEu = { id: "doc_eu#chunk_1", score: 0.95, metadata: { source: "mb", text: "EU Spec" } };
+    const matchUs = { id: "doc_us#chunk_1", score: 0.80, metadata: { source: "mb", text: "US Spec" } };
+    const { index } = makeIndex([matchEu, matchUs]);
+
+    const euChunk = {
+      id: "doc_eu#chunk_1",
+      document_id: "doc_eu",
+      document_title: "Mercedes-Benz Sprinter EU",
+      category: "chassis",
+      manufacturer: "mercedes-benz",
+      model: "sprinter",
+      market: "eu",
+      metadata_json: JSON.stringify({ year_start: 2025 }),
+      applicable_chassis: "sprinter",
+      page_number: 10,
+      section_title: "Fuses",
+      subsystem: "12v_dc",
+      chunk_text: "European market sprinter 230V inverter.",
+      schematic_r2_key: null,
+      schematic_caption: null,
+    };
+
+    const usChunk = {
+      id: "doc_us#chunk_1",
+      document_id: "doc_us",
+      document_title: "Mercedes-Benz Sprinter US",
+      category: "chassis",
+      manufacturer: "mercedes-benz",
+      model: "sprinter",
+      market: "us",
+      metadata_json: JSON.stringify({ year_start: 2025 }),
+      applicable_chassis: "sprinter",
+      page_number: 10,
+      section_title: "Fuses",
+      subsystem: "12v_dc",
+      chunk_text: "US market sprinter auxiliary battery connection.",
+      schematic_r2_key: null,
+      schematic_caption: null,
+    };
+
+    const { db } = makeDb([], [euChunk, usChunk]);
+
+    // Query without market: US market should be preferred over EU in rank ordering
+    const results = await hybridSearch(index, db, vec, {
+      manufacturer: "mercedes-benz",
+      model: "sprinter",
+    });
+
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]?.id).toBe("doc_us#chunk_1");
+    expect(results[0]?.market).toBe("us");
+  });
+
+  it("strictly deduplicates duplicate chunk IDs in search results", () => {
+    const chunk1 = {
+      id: "sprinter_manual#chunk_42",
+      score: 0.95,
+      source: "2025 Mercedes-Benz Sprinter",
+      text: "Auxiliary battery cutoff relay specifications.",
+      manufacturer: "mercedes-benz",
+      model: "sprinter",
+      market: "us",
+      model_year: 2025,
+    };
+    const chunk1Duplicate = { ...chunk1 };
+    const chunk2 = {
+      id: "sprinter_manual#chunk_43",
+      score: 0.90,
+      source: "2025 Mercedes-Benz Sprinter",
+      text: "Fuses for auxiliary high current connection point.",
+      manufacturer: "mercedes-benz",
+      model: "sprinter",
+      market: "us",
+      model_year: 2025,
+    };
+
+    const deduplicated = deduplicateCrossEditionChunks([chunk1, chunk2, chunk1Duplicate]);
+    expect(deduplicated).toHaveLength(2);
+    expect(deduplicated.map((c) => c.id)).toEqual(["sprinter_manual#chunk_42", "sprinter_manual#chunk_43"]);
+  });
+});
 });

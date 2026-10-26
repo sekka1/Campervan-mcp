@@ -313,6 +313,21 @@ export async function searchD1KeywordCandidates(
     params.push(filters.category.toLowerCase().trim());
   }
 
+  if (filters.manufacturer) {
+    const m = filters.manufacturer.toLowerCase().trim();
+    conditions.push(
+      `(LOWER(COALESCE(c.manufacturer, d.manufacturer, '')) = ? OR ? LIKE '%' || LOWER(COALESCE(c.manufacturer, d.manufacturer, '')) || '%' OR LOWER(COALESCE(c.manufacturer, d.manufacturer, '')) LIKE '%' || ? || '%')`
+    );
+    params.push(m, m, m);
+  }
+  if (filters.model) {
+    const m = filters.model.toLowerCase().trim();
+    conditions.push(
+      `(LOWER(COALESCE(c.model, d.model, '')) = ? OR ? LIKE '%' || LOWER(COALESCE(c.model, d.model, '')) || '%' OR LOWER(COALESCE(c.model, d.model, '')) LIKE '%' || ? || '%')`
+    );
+    params.push(m, m, m);
+  }
+
   if (filters.market) {
     conditions.push(`LOWER(COALESCE(c.market, d.market, 'global')) IN (?, 'global')`);
     params.push(filters.market.toLowerCase().trim());
@@ -431,36 +446,59 @@ export function computeTokenOverlap(textA: string, textB: string): number {
   return intersection / minSize;
 }
 
+export function extractYearFromChunk(chunk: HybridSearchResult): number {
+  if (chunk.model_year && chunk.model_year > 0) return chunk.model_year;
+  const match = chunk.id.match(/\b(202[0-9])\b/);
+  if (match) return parseInt(match[1]!, 10);
+  return 0;
+}
+
 export function deduplicateCrossEditionChunks(
   chunks: HybridSearchResult[]
 ): HybridSearchResult[] {
   const result: HybridSearchResult[] = [];
+  const seenIds = new Set<string>();
 
   for (const current of chunks) {
+    // 1. Strict deduplication by chunk ID: exact same chunk_id never appears twice
+    if (seenIds.has(current.id)) {
+      continue;
+    }
+
     const normCurrent = normalizeChunkForDedup(current.text);
     const mfg = (current.manufacturer || "").toLowerCase();
     const mdl = (current.model || "").toLowerCase();
-    const mkt = (current.market || "").toLowerCase();
-    const curYear = current.model_year || 0;
+    const mkt = (current.market || "global").toLowerCase();
+    const curYear = extractYearFromChunk(current);
+
+    const curParsed = current.id.match(/^(.+)#chunk_\d+$/);
+    const curDoc = curParsed ? curParsed[1] : current.id;
 
     let duplicateIndex = -1;
     for (let i = 0; i < result.length; i++) {
       const existing = result[i]!;
+      if (existing.id === current.id) {
+        duplicateIndex = i;
+        break;
+      }
+
       const exMfg = (existing.manufacturer || "").toLowerCase();
       const exMdl = (existing.model || "").toLowerCase();
-      const exMkt = (existing.market || "").toLowerCase();
-      const exYear = existing.model_year || 0;
+      const exMkt = (existing.market || "global").toLowerCase();
+      const exYear = extractYearFromChunk(existing);
 
-      // Only deduplicate between DIFFERENT model years of the same vehicle family & market
+      const exParsed = existing.id.match(/^(.+)#chunk_\d+$/);
+      const exDoc = exParsed ? exParsed[1] : existing.id;
+
+      // Only deduplicate between DIFFERENT editions/documents of the same vehicle family & market
+      const isDifferentEdition = curDoc !== exDoc || (curYear !== exYear && curYear > 0 && exYear > 0);
       if (
         mfg &&
         exMfg &&
         mfg === exMfg &&
         mdl === exMdl &&
         mkt === exMkt &&
-        curYear !== exYear &&
-        curYear > 0 &&
-        exYear > 0
+        isDifferentEdition
       ) {
         const normExisting = normalizeChunkForDedup(existing.text);
         const overlap = computeTokenOverlap(normCurrent, normExisting);
@@ -472,11 +510,14 @@ export function deduplicateCrossEditionChunks(
     }
 
     if (duplicateIndex === -1) {
+      seenIds.add(current.id);
       result.push(current);
     } else {
       const existing = result[duplicateIndex]!;
-      const exYear = existing.model_year || 0;
-      if (curYear > exYear) {
+      const exYear = extractYearFromChunk(existing);
+      if (curYear > exYear || (curYear === exYear && current.score > existing.score)) {
+        seenIds.delete(existing.id);
+        seenIds.add(current.id);
         result[duplicateIndex] = current;
       }
     }
@@ -727,6 +768,11 @@ export async function hybridSearch(
   }
   if (options.subsystem) filter["subsystem"] = { $eq: options.subsystem };
 
+  // If no regional market was specified by caller, default market preference is "us"
+  const defaultMarketPreference = options.market ?? "us";
+  const effectiveModel = options.model;
+  const effectiveMarket = options.market;
+
   let matches = await searchManuals(vectorIndex, queryVector, {
     topK: options.topK ?? 8,
     ...(Object.keys(filter).length > 0 ? { filter } : {}),
@@ -744,7 +790,9 @@ export async function hybridSearch(
     if (tokens.length > 0) {
       const keywordCandidates = await searchD1KeywordCandidates(db, tokens, {
         category: options.category,
-        market: options.market,
+        manufacturer: options.manufacturer,
+        model: effectiveModel,
+        market: effectiveMarket,
         model_year: options.model_year,
       });
 
@@ -777,8 +825,8 @@ export async function hybridSearch(
     ? await hydrateChunks(db, matches.map((m) => m.id), {
         category: options.category,
         manufacturer: options.manufacturer,
-        model: options.model,
-        market: options.market,
+        model: effectiveModel,
+        market: effectiveMarket,
         model_year: options.model_year,
       })
     : new Map<string, HydratedChunk>();
@@ -855,8 +903,33 @@ export async function hybridSearch(
   })
   ;
 
-  if (options.model_year === undefined) {
-    mappedResults = deduplicateCrossEditionChunks(mappedResults);
+  // Deduplicate by chunk ID and cross-edition
+  mappedResults = deduplicateCrossEditionChunks(mappedResults);
+
+  // Generic ranking priority:
+  // 1. Exact model match (when options.model is specified) ranks ahead of derivative/compound models
+  // 2. Default US/global market preference (when options.market is not specified or "us") ranks ahead of foreign regional markets
+  if (options.model || defaultMarketPreference === "us") {
+    mappedResults.sort((a, b) => {
+      if (options.model) {
+        const reqModel = options.model.toLowerCase().trim();
+        const aExact = (a.model || "").toLowerCase() === reqModel ? 1 : 0;
+        const bExact = (b.model || "").toLowerCase() === reqModel ? 1 : 0;
+        if (aExact !== bExact) {
+          return bExact - aExact;
+        }
+      }
+
+      if (defaultMarketPreference === "us") {
+        const aIsUs = (a.market || "global").toLowerCase() === "us" || (a.market || "global").toLowerCase() === "global" ? 1 : 0;
+        const bIsUs = (b.market || "global").toLowerCase() === "us" || (b.market || "global").toLowerCase() === "global" ? 1 : 0;
+        if (aIsUs !== bIsUs) {
+          return bIsUs - aIsUs;
+        }
+      }
+
+      return b.score - a.score;
+    });
   }
 
   return mappedResults.slice(0, options.topK ?? 8);
