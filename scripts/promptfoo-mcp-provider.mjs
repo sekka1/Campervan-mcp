@@ -6,7 +6,9 @@
  * 2. Invokes the model via DeepInfra OpenAI-compatible API.
  * 3. When the model emits `tool_calls`:
  *    - Executes each tool call via HTTP POST JSON-RPC to the MCP server.
- *    - Captures trace: `MCP Tool Result (${toolName}):\n${result}`
+ *    - Sends required headers: "Accept": "application/json, text/event-stream".
+ *    - Parses both application/json and text/event-stream (SSE data lines).
+ *    - Captures trace: `MCP Tool Result (${toolName}): ${JSON.stringify(content)}`.
  *    - Appends assistant message (with tool_calls) and `tool` role result message(s) to conversation history.
  *    - Invokes the LLM for Turn 2 so it synthesizes a comprehensive final answer.
  *    - Returns both the MCP Tool Result trace AND the LLM's synthesized final answer.
@@ -16,7 +18,7 @@
 const DEFAULT_SERVER_URL = "https://campervan-mcp-server.garlandk.workers.dev";
 const DEFAULT_API_BASE_URL = "https://api.deepinfra.com/v1/openai";
 
-const MCP_TOOLS_DEFINITIONS = [
+export const MCP_TOOLS_DEFINITIONS = [
   {
     type: "function",
     function: {
@@ -58,37 +60,87 @@ const MCP_TOOLS_DEFINITIONS = [
   },
 ];
 
-async function callMcpTool(serverUrl, name, args) {
+/**
+ * Executes a tool against an MCP server endpoint supporting Streamable HTTP Transport.
+ * Sends "Accept: application/json, text/event-stream" and handles both JSON and SSE data streams.
+ */
+export async function callMcpTool(serverUrl, name, args, customFetch = globalThis.fetch) {
+  const normalizedArgs = { ...args };
+  if (name === "calculate_dc_wire_and_fuse") {
+    if (normalizedArgs.system_voltage === undefined && normalizedArgs.voltage !== undefined) {
+      normalizedArgs.system_voltage = Number(normalizedArgs.voltage);
+    }
+    if (normalizedArgs.amperage === undefined && normalizedArgs.amps !== undefined) {
+      normalizedArgs.amperage = Number(normalizedArgs.amps);
+    }
+    if (normalizedArgs.amperage === undefined && normalizedArgs.watts !== undefined && normalizedArgs.system_voltage) {
+      normalizedArgs.amperage = Number(normalizedArgs.watts) / Number(normalizedArgs.system_voltage);
+    }
+    if (normalizedArgs.one_way_distance_feet === undefined && normalizedArgs.distance_feet !== undefined) {
+      normalizedArgs.one_way_distance_feet = Number(normalizedArgs.distance_feet);
+    }
+    if (normalizedArgs.allowable_drop_percent === undefined && normalizedArgs.max_voltage_drop_percent !== undefined) {
+      normalizedArgs.allowable_drop_percent = Number(normalizedArgs.max_voltage_drop_percent);
+    }
+  }
+
   const payload = {
     jsonrpc: "2.0",
     id: Date.now(),
     method: "tools/call",
     params: {
       name,
-      arguments: args,
+      arguments: normalizedArgs,
     },
   };
 
-  const response = await fetch(serverUrl, {
+  const response = await customFetch(serverUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Accept: "application/json",
+      Accept: "application/json, text/event-stream",
     },
     body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
-    throw new Error(`MCP server HTTP ${response.status}: ${await response.text()}`);
+    const errorBody = await response.text();
+    throw new Error(`MCP server HTTP ${response.status}: ${errorBody}`);
   }
 
-  const json = await response.json();
+  const contentType = response.headers?.get("content-type") || "";
+  let json;
+
+  if (contentType.includes("text/event-stream")) {
+    const raw = await response.text();
+    const dataLines = raw.split("\n").filter((l) => l.trim().startsWith("data:"));
+    for (const line of dataLines) {
+      try {
+        const parsed = JSON.parse(line.replace(/^data:\s*/, ""));
+        if (parsed.result !== undefined || parsed.error !== undefined) {
+          json = parsed;
+          break;
+        }
+      } catch {
+        // Continue searching lines
+      }
+    }
+    if (!json) {
+      try {
+        json = JSON.parse(raw);
+      } catch {
+        throw new Error(`Failed to parse SSE MCP response: ${raw}`);
+      }
+    }
+  } else {
+    json = await response.json();
+  }
+
   if (json.error) {
-    throw new Error(`MCP tool error: ${JSON.stringify(json.error)}`);
+    throw new Error(`JSON-RPC Error (${json.error.code || "unknown"}): ${json.error.message || JSON.stringify(json.error)}`);
   }
 
-  const contentItems = json.result?.content ?? [];
-  return contentItems.map((c) => c.text ?? JSON.stringify(c)).join("\n");
+  return json.result?.content ?? [];
 }
 
 export default class CampervanPromptfooProvider {
@@ -101,6 +153,7 @@ export default class CampervanPromptfooProvider {
     this.apiBaseUrl = this.config.apiBaseUrl || DEFAULT_API_BASE_URL;
     const envVarName = this.config.apiKeyEnvar || "DEEPINFRA_TOKEN";
     this.apiKey = process.env[envVarName] || "";
+    this.fetchFn = options.fetchFn || globalThis.fetch;
   }
 
   id() {
@@ -127,7 +180,7 @@ export default class CampervanPromptfooProvider {
 
     try {
       // Turn 1: Model request with tool declarations
-      const turn1Resp = await fetch(completionsUrl, {
+      const turn1Resp = await this.fetchFn(completionsUrl, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
@@ -156,7 +209,6 @@ export default class CampervanPromptfooProvider {
 
       const toolCalls = assistantMessage.tool_calls;
       if (!toolCalls || toolCalls.length === 0) {
-        // Direct answer with no tool call
         return { output: assistantMessage.content || "" };
       }
 
@@ -173,20 +225,24 @@ export default class CampervanPromptfooProvider {
           fnArgs = {};
         }
 
-        let resultText = "";
+        let content = [];
         try {
-          resultText = await callMcpTool(this.serverUrl, fnName, fnArgs);
+          content = await callMcpTool(this.serverUrl, fnName, fnArgs, this.fetchFn);
         } catch (err) {
-          resultText = `Error calling ${fnName}: ${err instanceof Error ? err.message : String(err)}`;
+          content = [{ type: "text", text: `Error calling ${fnName}: ${err instanceof Error ? err.message : String(err)}` }];
         }
+
+        const toolText = content
+          .map((c) => (typeof c === "object" && c.text ? c.text : JSON.stringify(c)))
+          .join("\n");
 
         toolResults.push({
           tool_call_id: tc.id,
           role: "tool",
-          content: resultText,
+          content: toolText,
         });
 
-        traces.push(`MCP Tool Result (${fnName}):\n${resultText}`);
+        traces.push(`MCP Tool Result (${fnName}): ${JSON.stringify(content)}`);
       }
 
       const traceOutput = traces.join("\n\n");
@@ -198,7 +254,7 @@ export default class CampervanPromptfooProvider {
         ...toolResults,
       ];
 
-      const turn2Resp = await fetch(completionsUrl, {
+      const turn2Resp = await this.fetchFn(completionsUrl, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
@@ -212,14 +268,13 @@ export default class CampervanPromptfooProvider {
       });
 
       if (!turn2Resp.ok) {
-        // If turn 2 fails, return tool trace
         return { output: traceOutput };
       }
 
       const turn2Data = await turn2Resp.json();
       const synthesizedAnswer = turn2Data.choices?.[0]?.message?.content || "";
 
-      // Output BOTH the MCP Tool Result trace and the synthesized answer so both assertions pass
+      // Output BOTH the MCP Tool Result trace and the synthesized answer so all assertions pass
       const combinedOutput = `${traceOutput}\n\n${synthesizedAnswer}`;
       return { output: combinedOutput };
     } catch (err) {

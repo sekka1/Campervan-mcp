@@ -1,3 +1,4 @@
+import { callMcpTool } from "../../scripts/promptfoo-mcp-provider.mjs";
 import { describe, it, expect, vi } from "vitest";
 import worker from "../../src/index";
 import { hashApiKey } from "../../src/utils/metering";
@@ -190,5 +191,35 @@ describe("E2E: Lean Campervan MCP Server Endpoints", () => {
     });
     const authRes = await worker.fetch(authReq, authEnv, ctx);
     expect(authRes.status).toBe(200);
+  });
+  it("callMcpTool from promptfoo-mcp-provider.mjs succeeds against real worker transport", async () => {
+    const customFetch = async (url: string, init?: RequestInit) => {
+      const req = new Request(url, init);
+      return worker.fetch(req, env, ctx);
+    };
+
+    // Test calculate_dc_wire_and_fuse
+    const wireContent = await callMcpTool(
+      "http://localhost/",
+      "calculate_dc_wire_and_fuse",
+      { system_voltage: 12, one_way_distance_feet: 15, amperage: 60 },
+      customFetch as unknown as typeof fetch
+    );
+    expect(wireContent).toHaveLength(1);
+    expect(wireContent[0]?.type).toBe("text");
+    const wireData = JSON.parse(wireContent[0]?.text);
+    expect(wireData.recommended_awg).toBe("2");
+
+    // Test search_van_manuals
+    const manualContent = await callMcpTool(
+      "http://localhost/",
+      "search_van_manuals",
+      { query: "Ford Transit auxiliary battery tap" },
+      customFetch as unknown as typeof fetch
+    );
+    expect(manualContent).toHaveLength(1);
+    expect(manualContent[0]?.type).toBe("text");
+    const manualData = JSON.parse(manualContent[0]?.text);
+    expect(manualData.query).toBe("Ford Transit auxiliary battery tap");
   });
 });
