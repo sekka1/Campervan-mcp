@@ -217,6 +217,134 @@ export interface HydrateFilterOptions {
  * Fetch full chunk text and provenance from D1 for the given chunk IDs
  * (the IDs returned by the Vectorize kNN query).
  */
+export const CONTINUATION_CUE_REGEX =
+  /(?:refer to|following|table|figure|see figure|see table|see below|details below)/i;
+
+export const ENGLISH_STOP_WORDS: ReadonlySet<string> = new Set([
+  "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", "any", "are",
+  "arent", "as", "at", "be", "because", "been", "before", "being", "below", "between", "both",
+  "but", "by", "can", "cant", "cannot", "could", "couldnt", "did", "didnt", "do", "does",
+  "doesnt", "doing", "dont", "down", "during", "each", "few", "for", "from", "further", "had",
+  "hadnt", "has", "hasnt", "have", "havent", "having", "he", "hed", "hell", "hes", "her",
+  "here", "heres", "hers", "herself", "him", "himself", "his", "how", "hows", "i", "id", "ill",
+  "im", "ive", "if", "in", "into", "is", "isnt", "it", "its", "itself", "lets", "me", "more",
+  "most", "mustnt", "my", "myself", "no", "nor", "not", "of", "off", "on", "once", "only",
+  "or", "other", "ought", "our", "ours", "ourselves", "out", "over", "own", "regarding", "same",
+  "shant", "she", "shed", "shell", "shes", "should", "shouldnt", "so", "some", "such", "than",
+  "that", "thats", "the", "their", "theirs", "them", "themselves", "then", "there", "theres",
+  "these", "they", "theyd", "theyll", "theyre", "theyve", "this", "those", "through", "to",
+  "too", "under", "until", "up", "very", "was", "wasnt", "we", "wed", "well", "were", "werent",
+  "what", "whats", "when", "whens", "where", "wheres", "which", "while", "who", "whos", "whom",
+  "why", "whys", "with", "wont", "would", "wouldnt", "you", "youd", "youll", "youre", "youve",
+  "your", "yours", "yourself", "yourselves",
+]);
+
+/**
+ * Strips common English stop words and extracts distinct technical keywords (length >= 3).
+ */
+export function tokenizeQuery(query: string): string[] {
+  const words = query
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, " ")
+    .split(/\s+/)
+    .map((w) => w.trim());
+
+  const tokens = words.filter(
+    (w) => w.length >= 3 && !ENGLISH_STOP_WORDS.has(w)
+  );
+
+  return Array.from(new Set(tokens));
+}
+
+/**
+ * Reciprocal Rank Fusion (RRF) for fusing vector similarity ranks and keyword match ranks.
+ */
+export function reciprocalRankFusion(
+  vectorRankedIds: string[],
+  keywordRankedIds: string[],
+  k = 60
+): string[] {
+  const scores = new Map<string, number>();
+
+  vectorRankedIds.forEach((id, rank) => {
+    const score = 1 / (k + rank + 1);
+    scores.set(id, (scores.get(id) ?? 0) + score);
+  });
+
+  keywordRankedIds.forEach((id, rank) => {
+    const score = 1 / (k + rank + 1);
+    scores.set(id, (scores.get(id) ?? 0) + score);
+  });
+
+  return Array.from(scores.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([id]) => id);
+}
+
+/**
+ * Searches D1 for chunks matching query tokens and ranks by distinct token matches.
+ */
+export async function searchD1KeywordCandidates(
+  db: D1Database,
+  tokens: string[],
+  filters: HydrateFilterOptions = {},
+  limit = 20
+): Promise<Array<{ id: string; score: number }>> {
+  if (tokens.length === 0) return [];
+
+  const queryTokens = tokens.slice(0, 8);
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  const scoreParts = queryTokens.map((t) => {
+    params.push(`%${t}%`, `%${t}%`);
+    return `(CASE WHEN LOWER(c.chunk_text) LIKE ? THEN 2 ELSE 0 END + CASE WHEN LOWER(COALESCE(c.section_title, '')) LIKE ? THEN 3 ELSE 0 END)`;
+  });
+
+  const tokenOrClauses = queryTokens.map(() => `(LOWER(c.chunk_text) LIKE ? OR LOWER(COALESCE(c.section_title, '')) LIKE ?)`);
+  for (const t of queryTokens) {
+    params.push(`%${t}%`, `%${t}%`);
+  }
+
+  conditions.push(`(${tokenOrClauses.join(" OR ")})`);
+
+  if (filters.category) {
+    conditions.push(`LOWER(COALESCE(c.category, d.category, '')) = ?`);
+    params.push(filters.category.toLowerCase().trim());
+  }
+
+  if (filters.market) {
+    conditions.push(`LOWER(COALESCE(c.market, d.market, 'global')) IN (?, 'global')`);
+    params.push(filters.market.toLowerCase().trim());
+  }
+
+  if (filters.model_year !== undefined) {
+    const metaExpr = `COALESCE(c.metadata_json, d.metadata_json)`;
+    conditions.push(
+      `(json_extract(${metaExpr}, '$.year_start') IS NULL OR (CAST(json_extract(${metaExpr}, '$.year_start') AS INTEGER) <= ? AND CAST(COALESCE(json_extract(${metaExpr}, '$.year_end'), json_extract(${metaExpr}, '$.year_start')) AS INTEGER) >= ?))`
+    );
+    params.push(filters.model_year, filters.model_year);
+  }
+
+  const query = `
+    SELECT c.id,
+           (${scoreParts.join(" + ")}) AS match_score
+    FROM document_chunks c
+    JOIN documents d ON d.id = c.document_id
+    WHERE ${conditions.join(" AND ")}
+    ORDER BY match_score DESC
+    LIMIT ${limit}
+  `;
+
+  try {
+    const { results } = await db.prepare(query).bind(...params).all<{ id: string; match_score: number }>();
+    return (results ?? []).map((r) => ({ id: r.id, score: r.match_score }));
+  } catch (err) {
+    console.warn("Keyword search failed:", err);
+    return [];
+  }
+}
+
 export async function hydrateChunks(
   db: D1Database,
   ids: string[],
@@ -307,6 +435,88 @@ export async function hydrateChunks(
     for (const row of fallbackResults.results ?? []) map.set(row.id, row);
   }
 
+  // Forward Neighbor / Continuation Chunk Expansion:
+  // For top primary hits (up to top 3), identify forward sibling chunks (#chunk_{index+1}, #chunk_{index+2})
+  // and append continuation text so specification tables or rules following headings are included.
+  const siblingIdsToFetch = new Set<string>();
+  const topIds = ids.slice(0, 3);
+  const primaryChunks = topIds.map((id) => map.get(id)).filter((c): c is HydratedChunk => Boolean(c));
+
+  for (const chunk of primaryChunks) {
+    const parsed = chunk.id.match(/^(.+)#chunk_(\d+)$/);
+    if (!parsed) continue;
+    const docPrefix = parsed[1]!;
+    const idx = parseInt(parsed[2]!, 10);
+    siblingIdsToFetch.add(`${docPrefix}#chunk_${idx + 1}`);
+
+    const hasContinuationCue = CONTINUATION_CUE_REGEX.test(chunk.chunk_text);
+    if (hasContinuationCue) {
+      siblingIdsToFetch.add(`${docPrefix}#chunk_${idx + 2}`);
+    }
+  }
+
+  for (const existingId of map.keys()) {
+    siblingIdsToFetch.delete(existingId);
+  }
+
+  if (siblingIdsToFetch.size > 0) {
+    const sibPlaceholders = Array.from(siblingIdsToFetch).map(() => "?").join(", ");
+    const sibQuery = `SELECT c.id, c.document_id, d.title AS document_title,
+                COALESCE(c.category, d.category) AS category,
+                COALESCE(c.manufacturer, d.manufacturer) AS manufacturer,
+                d.applicable_chassis, c.page_number, c.section_title, c.subsystem, c.chunk_text,
+                s.r2_key AS schematic_r2_key, s.caption AS schematic_caption,
+                COALESCE(c.model, d.model) AS model,
+                COALESCE(c.market, d.market) AS market,
+                COALESCE(c.metadata_json, d.metadata_json) AS metadata_json
+         FROM document_chunks c
+         JOIN documents d ON d.id = c.document_id
+         LEFT JOIN schematic_images s ON s.id = c.schematic_image_id
+         WHERE c.id IN (${sibPlaceholders})`;
+
+    try {
+      const sibResults = await db.prepare(sibQuery).bind(...Array.from(siblingIdsToFetch)).all<HydratedChunk>();
+      const sibMap = new Map<string, HydratedChunk>();
+      for (const row of sibResults.results ?? []) {
+        sibMap.set(row.id, row);
+      }
+
+      for (const chunk of primaryChunks) {
+        const parsed = chunk.id.match(/^(.+)#chunk_(\d+)$/);
+        if (!parsed) continue;
+        const docPrefix = parsed[1]!;
+        const idx = parseInt(parsed[2]!, 10);
+        const sib1 = sibMap.get(`${docPrefix}#chunk_${idx + 1}`) ?? map.get(`${docPrefix}#chunk_${idx + 1}`);
+
+        if (sib1 && sib1.document_id === chunk.document_id) {
+          const sectionLabel = sib1.section_title ? ` (${sib1.section_title})` : "";
+          chunk.chunk_text += `\n\n[Continuation from next section/table${sectionLabel}]:\n${sib1.chunk_text}`;
+
+          if (!chunk.schematic_r2_key && sib1.schematic_r2_key) {
+            chunk.schematic_r2_key = sib1.schematic_r2_key;
+            chunk.schematic_caption = sib1.schematic_caption;
+          }
+
+          const hasContinuationCue = CONTINUATION_CUE_REGEX.test(chunk.chunk_text);
+          const sharesPage = sib1.page_number === chunk.page_number;
+          if (hasContinuationCue || sharesPage) {
+            const sib2 = sibMap.get(`${docPrefix}#chunk_${idx + 2}`) ?? map.get(`${docPrefix}#chunk_${idx + 2}`);
+            if (sib2 && sib2.document_id === chunk.document_id) {
+              const sec2Label = sib2.section_title ? ` (${sib2.section_title})` : "";
+              chunk.chunk_text += `\n\n[Continuation${sec2Label}]:\n${sib2.chunk_text}`;
+              if (!chunk.schematic_r2_key && sib2.schematic_r2_key) {
+                chunk.schematic_r2_key = sib2.schematic_r2_key;
+                chunk.schematic_caption = sib2.schematic_caption;
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Forward continuation hydration failed:", err);
+    }
+  }
+
   return map;
 }
 
@@ -359,6 +569,7 @@ export async function hybridSearch(
     model?: string;
     market?: "us" | "eu" | "global";
     model_year?: number;
+    queryText?: string;
   } = {}
 ): Promise<HybridSearchResult[]> {
   const filter: VectorizeVectorMetadataFilter = {};
@@ -388,6 +599,40 @@ export async function hybridSearch(
       topK: options.topK ?? 8,
     });
   }
+  if (db && options.queryText) {
+    const tokens = tokenizeQuery(options.queryText);
+    if (tokens.length > 0) {
+      const keywordCandidates = await searchD1KeywordCandidates(db, tokens, {
+        category: options.category,
+        market: options.market,
+        model_year: options.model_year,
+      });
+
+      if (keywordCandidates.length > 0) {
+        const fusedIds = reciprocalRankFusion(
+          matches.map((m) => m.id),
+          keywordCandidates.map((k) => k.id)
+        );
+
+        const matchById = new Map(matches.map((m) => [m.id, m]));
+        const reorderedMatches: ManualChunk[] = [];
+        for (const id of fusedIds) {
+          const existing = matchById.get(id);
+          if (existing) {
+            reorderedMatches.push(existing);
+          } else {
+            reorderedMatches.push({
+              id,
+              score: 0.75,
+              metadata: { source: "d1_keyword_search", text: "" },
+            });
+          }
+        }
+        matches = reorderedMatches.slice(0, Math.max(options.topK ?? 8, 12));
+      }
+    }
+  }
+
   const hydrated = db
     ? await hydrateChunks(db, matches.map((m) => m.id), {
         category: options.category,

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { buildSchematicUrl, hybridSearch, hydrateChunks } from "../../src/utils/db";
+import { buildSchematicUrl, hybridSearch, hydrateChunks, tokenizeQuery, reciprocalRankFusion } from "../../src/utils/db";
 
 function makeIndex(matches: unknown[]) {
   const query = vi.fn().mockResolvedValue({ matches });
@@ -373,4 +373,138 @@ describe("universal metadata filtering in hydrateChunks and hybridSearch", () =>
     expect(results).toHaveLength(1);
     expect(results[0]?.id).toBe("chunk_grounding");
   });
+
+describe("Universal Tokenization & Reciprocal Rank Fusion (RRF)", () => {
+  it("strips standard English stop words and returns distinct technical tokens", () => {
+    const query = "Where are the approved chassis grounding points for auxiliary wiring regarding BMS rules?";
+    const tokens = tokenizeQuery(query);
+    expect(tokens).toContain("approved");
+    expect(tokens).toContain("chassis");
+    expect(tokens).toContain("grounding");
+    expect(tokens).toContain("points");
+    expect(tokens).toContain("auxiliary");
+    expect(tokens).toContain("wiring");
+    expect(tokens).toContain("bms");
+    expect(tokens).toContain("rules");
+
+    // Must strip stop words
+    expect(tokens).not.toContain("where");
+    expect(tokens).not.toContain("are");
+    expect(tokens).not.toContain("the");
+    expect(tokens).not.toContain("for");
+    expect(tokens).not.toContain("regarding");
+  });
+
+  it("fuses vector and keyword rankings via Reciprocal Rank Fusion", () => {
+    const vectorRanked = ["doc#chunk_1", "doc#chunk_2", "doc#chunk_3"];
+    const keywordRanked = ["doc#chunk_3", "doc#chunk_1", "doc#chunk_4"];
+    const fused = reciprocalRankFusion(vectorRanked, keywordRanked, 60);
+
+    // doc#chunk_1 (rank 1 in vector, rank 2 in keyword) and doc#chunk_3 (rank 3 in vector, rank 1 in keyword)
+    expect(fused[0]).toBe("doc#chunk_1");
+    expect(fused[1]).toBe("doc#chunk_3");
+    expect(fused).toContain("doc#chunk_2");
+    expect(fused).toContain("doc#chunk_4");
+  });
+});
+
+describe("Universal Forward Continuation Context Expansion", () => {
+  it("automatically pulls in chunk_11 when doc#chunk_10 is a top match", async () => {
+    const chunk10 = {
+      id: "doc_heater#chunk_10",
+      document_id: "doc_heater",
+      document_title: "Heater Manual",
+      category: "climate",
+      manufacturer: "velit",
+      applicable_chassis: "universal",
+      page_number: 14,
+      section_title: "Wiring Harness Pinout",
+      subsystem: "heating_cooling",
+      chunk_text: "Standard wiring harness connector introduction.",
+      schematic_r2_key: null,
+      schematic_caption: null,
+    };
+
+    const chunk11 = {
+      id: "doc_heater#chunk_11",
+      document_id: "doc_heater",
+      document_title: "Heater Manual",
+      category: "climate",
+      manufacturer: "velit",
+      applicable_chassis: "universal",
+      page_number: 14,
+      section_title: "Pinout Table",
+      subsystem: "heating_cooling",
+      chunk_text: "Pin 1: +12V Red, Pin 2: Ground Black, Pin 3: Signal Blue.",
+      schematic_r2_key: null,
+      schematic_caption: null,
+    };
+
+    // First query for chunk_10, second query fetches sibling chunk_11
+    const { db } = makeDb([chunk10], [chunk11]);
+    const hydrated = await hydrateChunks(db, ["doc_heater#chunk_10"]);
+    const result = hydrated.get("doc_heater#chunk_10");
+
+    expect(result).toBeDefined();
+    expect(result?.chunk_text).toContain("Standard wiring harness connector introduction.");
+    expect(result?.chunk_text).toContain("[Continuation from next section/table (Pinout Table)]:");
+    expect(result?.chunk_text).toContain("Pin 1: +12V Red, Pin 2: Ground Black, Pin 3: Signal Blue.");
+  });
+
+  it("pulls in both chunk_11 and chunk_12 when chunk_10 contains a table/figure continuation cue", async () => {
+    const chunk10 = {
+      id: "doc_bemm#chunk_10",
+      document_id: "doc_bemm",
+      document_title: "BEMM Manual",
+      category: "chassis",
+      manufacturer: "ford",
+      applicable_chassis: "transit",
+      page_number: 40,
+      section_title: "Grounding Locations",
+      subsystem: "chassis_interface",
+      chunk_text: "For auxiliary grounding, refer to the following figures and tables for stud locations.",
+      schematic_r2_key: null,
+      schematic_caption: null,
+    };
+
+    const chunk11 = {
+      id: "doc_bemm#chunk_11",
+      document_id: "doc_bemm",
+      document_title: "BEMM Manual",
+      category: "chassis",
+      manufacturer: "ford",
+      applicable_chassis: "transit",
+      page_number: 40,
+      section_title: "Figure 4-1 Ground Studs",
+      subsystem: "chassis_interface",
+      chunk_text: "Figure 4-1 shows Point 43 (driver seat base ground stud M8).",
+      schematic_r2_key: null,
+      schematic_caption: null,
+    };
+
+    const chunk12 = {
+      id: "doc_bemm#chunk_12",
+      document_id: "doc_bemm",
+      document_title: "BEMM Manual",
+      category: "chassis",
+      manufacturer: "ford",
+      applicable_chassis: "transit",
+      page_number: 41,
+      section_title: "BMS Warning Note",
+      subsystem: "chassis_interface",
+      chunk_text: "WARNING: Do not connect auxiliary battery negative directly to the vehicle battery terminal.",
+      schematic_r2_key: null,
+      schematic_caption: null,
+    };
+
+    const { db } = makeDb([chunk10], [chunk11, chunk12]);
+    const hydrated = await hydrateChunks(db, ["doc_bemm#chunk_10"]);
+    const result = hydrated.get("doc_bemm#chunk_10");
+
+    expect(result).toBeDefined();
+    expect(result?.chunk_text).toContain("refer to the following figures and tables");
+    expect(result?.chunk_text).toContain("Point 43 (driver seat base ground stud M8)");
+    expect(result?.chunk_text).toContain("WARNING: Do not connect auxiliary battery negative");
+  });
+});
 });
