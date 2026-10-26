@@ -6,6 +6,24 @@
  */
 
 import { deflateSync } from "node:zlib";
+/**
+ * Polyfills Math.sumPrecise() when running on Node.js < 24.
+ * unpdf 1.8.0 / pdfjs-dist v5 invokes Math.sumPrecise for dashed paths (setDash), complex tables, and font metrics.
+ */
+export function ensureMathSumPrecisePolyfill(): void {
+  const mathAny = Math as unknown as { sumPrecise?: (items: Iterable<number>) => number };
+  if (typeof mathAny.sumPrecise !== "function") {
+    mathAny.sumPrecise = (items: Iterable<number>): number => {
+      let total = 0;
+      for (const value of items) {
+        total += Number(value);
+      }
+      return total;
+    };
+  }
+}
+ensureMathSumPrecisePolyfill();
+
 import { renderPageAsImage, type getDocumentProxy } from "unpdf";
 
 

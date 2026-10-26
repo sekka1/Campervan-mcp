@@ -565,4 +565,62 @@ describe("runSync", () => {
     expect(writtenManifest["heaters/velit-2026.pdf"]).toMatchObject({ etag: "e2" });
     expect(writtenManifest["old/removed.pdf"]).toBeUndefined();
   });
+  it("isolates errors per file so succeeding files are persisted to manifest when one file in a batch fails", async () => {
+    // 3 added files: file1.pdf, file2_corrupt.pdf, file3.pdf
+    sendMock
+      .mockResolvedValueOnce({
+        Contents: [
+          { Key: "file1.pdf", ETag: "e1" },
+          { Key: "file2_corrupt.pdf", ETag: "e2" },
+          { Key: "file3.pdf", ETag: "e3" },
+        ],
+        IsTruncated: false,
+      }) // list
+      .mockResolvedValueOnce({
+        Body: {
+          transformToString: async () => JSON.stringify({}),
+        },
+      }) // manifest fetch
+      .mockResolvedValueOnce({ Body: { transformToByteArray: async () => new Uint8Array([1, 2, 3]) } }) // download file1
+      .mockRejectedValueOnce(new Error("Corrupt PDF stream error on file2")) // download file2 fails
+      .mockResolvedValueOnce({ Body: { transformToByteArray: async () => new Uint8Array([1, 2, 3]) } }) // download file3
+      .mockResolvedValueOnce({}); // manifest write
+
+    const mockFetch = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      if (url.toString().includes("/ai/run/")) {
+        const body = JSON.parse(init?.body as string);
+        return new Response(JSON.stringify({ result: { data: body.text.map(() => Array(768).fill(0.1)) } }), {
+          status: 200,
+        });
+      }
+      return new Response("{}", { status: 200 });
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // Execution should throw aggregate error naming file2_corrupt.pdf
+    await expect(runSync({ dryRun: false, forceReindex: false })).rejects.toThrow(
+      "Ingestion completed with 1 failure(s): file2_corrupt.pdf"
+    );
+
+    // Verify error was logged naming file2_corrupt.pdf
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("file2_corrupt.pdf"),
+      expect.any(String)
+    );
+
+    // Verify manifest was still written with file1 and file3!
+    const manifestWriteCall = sendMock.mock.calls.find((call) => {
+      const cmd = call[0];
+      return cmd?.input?.Key === "manuals_manifest.json" || (cmd?.constructor && cmd.constructor.name === "PutObjectCommand");
+    });
+    expect(manifestWriteCall).toBeDefined();
+    const writtenManifest = JSON.parse(manifestWriteCall![0].input.Body);
+    expect(writtenManifest["file1.pdf"]).toMatchObject({ etag: "e1" });
+    expect(writtenManifest["file3.pdf"]).toMatchObject({ etag: "e3" });
+    expect(writtenManifest["file2_corrupt.pdf"]).toBeUndefined();
+
+    errorSpy.mockRestore();
+  });
 });
