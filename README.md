@@ -325,3 +325,18 @@ Requires `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` environment variable
 ## Contributing
 
 See [`AGENTS.md`](./AGENTS.md) for repository conventions and rules that apply to automated/AI contributors (deterministic calculations, migration policy, schema validation with Zod, and testing thresholds), which are also good practices for human contributors.
+
+
+### Universal Retrieval Pipeline & Search Mechanics
+
+The retrieval engine in `src/utils/db.ts` applies three universal, product-agnostic RAG mechanisms:
+1. **Strict `top_k` Contract & Forward Continuation Expansion:** Automatically attaches continuation text from forward sibling chunks (`#chunk_{N+1}`, `#chunk_{N+2}`) to capture split tables and multi-page rules, while strictly guaranteeing `results.length <= top_k` (default `8`).
+2. **Stop-Word-Filtered Multi-Token RRF:** Strips English stop words, scores D1 candidates by distinct technical keyword matches in `chunk_text` and `section_title`, and fuses results with Vectorize kNN using Reciprocal Rank Fusion (RRF).
+3. **Resilient Metadata Filtering:** Relaxes `model` and `manufacturer` using bidirectional substring matching, and automatically falls back to unfiltered hydration if metadata filters yield 0 rows for valid semantic hits.
+
+### Promptfoo Live Benchmark & 2-Turn Tool Loop
+
+Benchmark evaluations (`promptfooconfig.yaml` via `scripts/promptfoo-mcp-provider.mjs`) use a full 2-turn loop:
+- **Turn 1:** The candidate LLM invokes live MCP tools (`calculate_dc_wire_and_fuse`, `search_van_manuals`).
+- **Turn 2:** Tool results are fed back into the model conversation so it synthesizes a final engineering answer.
+- Both the `MCP Tool Result (...)` trace and the final answer are output, passing both tool invocation assertions and model-graded LLM rubrics.

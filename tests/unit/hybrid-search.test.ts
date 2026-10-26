@@ -507,4 +507,52 @@ describe("Universal Forward Continuation Context Expansion", () => {
     expect(result?.chunk_text).toContain("WARNING: Do not connect auxiliary battery negative");
   });
 });
+
+  it("enforces strict top_k cap (default 8) when 15 contiguous chunks exist in D1 and continuation expansion triggers", async () => {
+    const vec = new Array(768).fill(0.1) as number[];
+    const allMatches = Array.from({ length: 15 }, (_, i) => ({
+      id: `doc_bemm#chunk_${i + 1}`,
+      score: 0.99 - i * 0.02,
+      metadata: { source: "ford", text: `Base text for chunk ${i + 1}` },
+    }));
+
+    const { index } = makeIndex(allMatches);
+
+    const contiguousDocs = Array.from({ length: 15 }, (_, i) => ({
+      id: `doc_bemm#chunk_${i + 1}`,
+      document_id: "doc_bemm",
+      document_title: "Ford Transit BEMM",
+      category: "chassis",
+      manufacturer: "ford",
+      model: "transit",
+      market: "us",
+      metadata_json: "{}",
+      applicable_chassis: "transit",
+      page_number: Math.floor(i / 2) + 1,
+      section_title: `Section ${i + 1}`,
+      subsystem: "12v_dc",
+      chunk_text:
+        i === 0
+          ? "Customer connection points overview: refer to the following figures and tables for ratings."
+          : `Specification detail and rules for step ${i + 1}.`,
+      schematic_r2_key: null,
+      schematic_caption: null,
+    }));
+
+    // In a contiguous D1 table, hydrateChunks finds siblings in contiguousDocs
+    const { db } = makeDb(contiguousDocs, contiguousDocs);
+
+    const results = await hybridSearch(index, db, vec, {
+      topK: 8,
+      queryText: "Customer Connection Points CCP1 CCP2 ratings",
+    });
+
+    // Must be strictly capped at 8 (not 12 or 15)
+    expect(results.length).toBe(8);
+
+    // First chunk must have stitched forward continuation text
+    expect(results[0]?.text).toContain("Customer connection points overview");
+    expect(results[0]?.text).toContain("[Continuation from next section/table");
+    expect(results[0]?.text).toContain("Specification detail and rules for step 2");
+  });
 });
