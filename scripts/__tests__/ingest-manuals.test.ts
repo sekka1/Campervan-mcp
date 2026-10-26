@@ -39,6 +39,10 @@ import {
   sanitizeFilename,
   upsertVectors,
   VECTORIZE_INDEX_NAME,
+  capVectorMetadataBytes,
+  MAX_VECTORIZE_METADATA_BYTES,
+  splitTextByWords,
+  buildD1UpsertStatements,
 } from "../ingest-manuals";
 
 // ---------------------------------------------------------------------------
@@ -660,5 +664,129 @@ describe("runIngestion", () => {
     const upsertIndex = calledUrls.findIndex((url) => url.includes("/upsert"));
     expect(deleteIndex).toBeGreaterThanOrEqual(0);
     expect(upsertIndex).toBeGreaterThan(deleteIndex);
+  });
+
+  it("enforces the 10,240-byte Vectorize limit and throws HTTP 400 (code 40016) if metadata exceeds 10240 bytes", async () => {
+    const mockVectorizeFetch = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      const lines = (init?.body as string).trim().split("\n");
+      for (const line of lines) {
+        const item = JSON.parse(line);
+        const metaBytes = Buffer.byteLength(JSON.stringify(item.metadata ?? {}), "utf8");
+        if (metaBytes > 10240) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              errors: [
+                {
+                  code: 40016,
+                  message: `oversized metadata (${metaBytes} bytes) must not exceed 10240 bytes`,
+                },
+              ],
+            }),
+            { status: 400, headers: { "Content-Type": "application/json" } }
+          );
+        }
+      }
+      return new Response("{}", { status: 200 });
+    });
+    global.fetch = mockVectorizeFetch as unknown as typeof fetch;
+
+    // A vector with 15,000 characters of dense multi-byte text (e.g. •, —, °, quotes)
+    const denseText = "• Table of Contents: Section 1.1 \"Auxiliary 12V DC\" — 105°C rated wiring. ".repeat(200);
+    expect(denseText.length).toBeGreaterThan(14000);
+
+    const oversizedVector = {
+      id: "bemm#chunk_2",
+      values: [0.1, 0.2],
+      metadata: {
+        text: denseText,
+        source: "ford_bemm",
+        page: 2,
+        section: "Table of Contents — \"Electrical & Mounting\"",
+      },
+    };
+
+    // Calling upsertVectors must cap metadata under MAX_VECTORIZE_METADATA_BYTES (9,500) and succeed
+    await upsertVectors("acct123", "token123", [oversizedVector]);
+
+    expect(mockVectorizeFetch).toHaveBeenCalledTimes(1);
+    const sentNdjson = (mockVectorizeFetch.mock.calls[0][1]?.body as string).trim();
+    const sentItem = JSON.parse(sentNdjson);
+    const sentBytes = Buffer.byteLength(JSON.stringify(sentItem.metadata), "utf8");
+
+    expect(sentBytes).toBeLessThanOrEqual(MAX_VECTORIZE_METADATA_BYTES);
+    expect(sentBytes).toBeLessThanOrEqual(10240);
+  });
+});
+
+describe("capVectorMetadataBytes & splitTextByWords oversized block handling", () => {
+  it("progressively trims oversized metadata with multi-byte UTF-8 symbols and quotes", () => {
+    const multiByteText = "• Section 4.3 \"CCP2 Auxiliary Power\" — 175A rating @ 12V DC, 105°C insulation. ".repeat(150);
+    const meta = {
+      text: multiByteText,
+      source: "ford_bemm",
+      category: "chassis",
+    };
+
+    const initialBytes = Buffer.byteLength(JSON.stringify(meta), "utf8");
+    expect(initialBytes).toBeGreaterThan(11000);
+
+    const capped = capVectorMetadataBytes(meta, 9500);
+    const cappedBytes = Buffer.byteLength(JSON.stringify(capped), "utf8");
+
+    expect(cappedBytes).toBeLessThanOrEqual(9500);
+    expect(typeof capped.text).toBe("string");
+    expect((capped.text as string).startsWith("• Section 4.3")).toBe(true);
+  });
+
+  it("hard-splits oversized unbroken single blocks in splitTextByWords", () => {
+    // 15,000 character continuous block
+    const giantBlock = "• Table of Contents line item: details regarding wiring and fuses. ".repeat(250);
+    expect(giantBlock.length).toBeGreaterThan(15000);
+
+    const chunks = splitTextByWords(giantBlock);
+    expect(chunks.length).toBeGreaterThan(4);
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(3000);
+    }
+  });
+
+  it("preserves complete untruncated text in D1 upsert statements even when vector metadata is capped", () => {
+    const fullText = "A".repeat(15000);
+    const chunk = {
+      id: "doc#chunk_0",
+      text: fullText,
+      pageNumber: 1,
+      sectionTitle: "TOC",
+      metadata: {
+        filename: "manuals/doc.pdf",
+        manual_title: "Doc Title",
+        title: "Doc Title",
+        doc_type: "manual",
+        category: "chassis",
+        chassis: "transit",
+        subsystem: "general",
+        page: 1,
+        chunk_index: 0,
+        total_chunks: 1,
+        text: fullText,
+        source: "doc",
+      },
+    };
+
+    const doc = {
+      id: "doc",
+      title: "Doc Title",
+      category: "chassis",
+      manufacturer: "ford",
+      applicableChassis: "transit",
+      rawR2Path: "manuals/doc.pdf",
+    };
+    const statements = buildD1UpsertStatements(doc, [chunk]);
+    expect(statements.length).toBeGreaterThan(0);
+    const chunkInsert = statements.find((s) => s.sql.includes("INSERT INTO document_chunks"));
+    expect(chunkInsert).toBeDefined();
+    expect(chunkInsert?.params[5]).toBe(fullText);
+    expect((chunkInsert?.params[5] as string).length).toBe(15000);
   });
 });
