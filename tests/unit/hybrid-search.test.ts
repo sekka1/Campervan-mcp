@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { buildSchematicUrl, hybridSearch, hydrateChunks, tokenizeQuery, reciprocalRankFusion } from "../../src/utils/db";
+import { buildSchematicUrl, buildCanonicalTitle, computeTokenOverlap, deduplicateCrossEditionChunks, hybridSearch, hydrateChunks, normalizeChunkForDedup, tokenizeQuery, reciprocalRankFusion } from "../../src/utils/db";
 
 function makeIndex(matches: unknown[]) {
   const query = vi.fn().mockResolvedValue({ matches });
@@ -334,7 +334,7 @@ describe("universal metadata filtering in hydrateChunks and hybridSearch", () =>
 
     expect(results).toHaveLength(1);
     expect(results[0]?.id).toBe("chunk_ccp2");
-    expect(results[0]?.document_title).toBe("Ford Transit BEMM");
+    expect(results[0]?.document_title).toBe("2020-2024 Ford Transit (US)");
   });
 
   it("matches model: Ford Transit to transit via bidirectional SQL substring matching", async () => {
@@ -555,4 +555,172 @@ describe("Universal Forward Continuation Context Expansion", () => {
     expect(results[0]?.text).toContain("[Continuation from next section/table");
     expect(results[0]?.text).toContain("Specification detail and rules for step 2");
   });
+
+describe("Progressive (Stepwise) Filter Relaxation", () => {
+  it("relaxes category in Stage 2 when category produces 0 matches but manufacturer and model match", async () => {
+    const vec = new Array(768).fill(0.1) as number[];
+    const match = { id: "doc_bemm#chunk_5", score: 0.95, metadata: { source: "ford", text: "CCP1 60A" } };
+    const { index } = makeIndex([match]);
+
+    const transitDoc = {
+      id: "doc_bemm#chunk_5",
+      document_id: "doc_bemm",
+      document_title: "Ford Transit BEMM",
+      category: "chassis", // Document is chassis, but query asks for category "power"
+      manufacturer: "ford",
+      model: "transit",
+      market: "us",
+      metadata_json: JSON.stringify({ year_start: 2026 }),
+      applicable_chassis: "transit",
+      page_number: 10,
+      section_title: "Customer Connection Points",
+      subsystem: "12v_dc",
+      chunk_text: "CCP1 60A and CCP2 175A ratings.",
+      schematic_r2_key: null,
+      schematic_caption: null,
+    };
+
+    // Stage 1 (with category: power) returns empty, Stage 2 (category dropped) returns transitDoc
+    const { db } = makeDb([], [transitDoc]);
+
+    const results = await hybridSearch(index, db, vec, {
+      category: "power",
+      manufacturer: "ford",
+      model: "transit",
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.id).toBe("doc_bemm#chunk_5");
+    expect(results[0]?.manufacturer).toBe("ford");
+    expect(results[0]?.model).toBe("transit");
+    expect(results[0]?.model_year).toBe(2026);
+    expect(results[0]?.source).toContain("2026 Ford Transit (US)");
+  });
+});
+
+describe("buildCanonicalTitle", () => {
+  it("builds canonical manual title from metadata", () => {
+    const title = buildCanonicalTitle({
+      document_title: "2027 Eu Transit",
+      manufacturer: "ford",
+      model: "transit_custom",
+      market: "eu",
+      metadata_json: JSON.stringify({ year_start: 2026 }),
+    });
+    expect(title).toBe("2026 Ford Transit Custom (EU) [2027 Eu Transit]");
+  });
+});
+
+describe("Cross-Edition Near-Duplicate Deduplication", () => {
+  it("normalizes text and computes token overlap between editions", () => {
+    const text2024 = "Date of Publication: 04/2024. Page 42. Customer connection point CCP1 is 60A and CCP2 is 175A on seat base.";
+    const text2027 = "Date of Publication: 09/2026. Page 44. Customer connection point CCP1 is 60A and CCP2 is 175A on seat base.";
+
+    const norm2024 = normalizeChunkForDedup(text2024);
+    const norm2027 = normalizeChunkForDedup(text2027);
+
+    const overlap = computeTokenOverlap(norm2024, norm2027);
+    expect(overlap).toBeGreaterThanOrEqual(0.80);
+  });
+
+  it("deduplicates identical chunks across different model years, keeping the newest edition", () => {
+    const chunk2024 = {
+      id: "transit_2024#chunk_10",
+      score: 0.95,
+      source: "2024 Ford Transit (US)",
+      text: "Customer connection points CCP1 (60A) and CCP2 (175A) located on driver seat base.",
+      manufacturer: "ford",
+      model: "transit",
+      market: "us",
+      model_year: 2024,
+    };
+
+    const chunk2027 = {
+      id: "transit_2027#chunk_12",
+      score: 0.93,
+      source: "2027 Ford Transit (US)",
+      text: "Customer connection points CCP1 (60A) and CCP2 (175A) located on driver seat base.",
+      manufacturer: "ford",
+      model: "transit",
+      market: "us",
+      model_year: 2027,
+    };
+
+    const distinctChunk = {
+      id: "transit_2027#chunk_40",
+      score: 0.90,
+      source: "2027 Ford Transit (US)",
+      text: "Auxiliary grounding studs 43 and 44 must not bypass the Battery Monitoring Sensor.",
+      manufacturer: "ford",
+      model: "transit",
+      market: "us",
+      model_year: 2027,
+    };
+
+    const deduplicated = deduplicateCrossEditionChunks([chunk2024, chunk2027, distinctChunk]);
+    expect(deduplicated).toHaveLength(2);
+    // Must keep the 2027 edition of the CCP chunk
+    const ccpChunk = deduplicated.find((c) => c.text.includes("CCP1 (60A)"));
+    expect(ccpChunk?.id).toBe("transit_2027#chunk_12");
+    expect(ccpChunk?.model_year).toBe(2027);
+  });
+});
+
+describe("Continuation Expansion on Non-Top-3 Chunks with Table/Diagram Cues", () => {
+  it("expands a rank #5 chunk with forward sibling when text contains table/figure cues", async () => {
+    const vec = new Array(768).fill(0.1) as number[];
+    const matches = Array.from({ length: 6 }, (_, i) => ({
+      id: `doc_bemm#chunk_${i + 1}`,
+      score: 0.99 - i * 0.05,
+      metadata: { source: "ford", text: `Chunk ${i + 1}` },
+    }));
+    const { index } = makeIndex(matches);
+
+    // Chunk #5 (rank 5, 0-indexed 4) contains "refer to the following figures for ground points"
+    const chunk5 = {
+      id: "doc_bemm#chunk_5",
+      document_id: "doc_bemm",
+      document_title: "Ford Transit BEMM",
+      category: "chassis",
+      manufacturer: "ford",
+      model: "transit",
+      market: "us",
+      metadata_json: JSON.stringify({ year_start: 2026 }),
+      applicable_chassis: "transit",
+      page_number: 30,
+      section_title: "Grounding Locations",
+      subsystem: "12v_dc",
+      chunk_text: "For auxiliary electrical installation, refer to the following figures for ground points.",
+      schematic_r2_key: null,
+      schematic_caption: null,
+    };
+
+    const siblingChunk6 = {
+      id: "doc_bemm#chunk_6",
+      document_id: "doc_bemm",
+      document_title: "Ford Transit BEMM",
+      category: "chassis",
+      manufacturer: "ford",
+      model: "transit",
+      market: "us",
+      metadata_json: JSON.stringify({ year_start: 2026 }),
+      applicable_chassis: "transit",
+      page_number: 30,
+      section_title: "Figure 4-1 Ground Studs",
+      subsystem: "12v_dc",
+      chunk_text: "Point 43: Driver seat pedestal ground stud (M8 torque 25 Nm).",
+      schematic_r2_key: null,
+      schematic_caption: null,
+    };
+
+    const { db } = makeDb([chunk5, siblingChunk6], [siblingChunk6]);
+    const results = await hybridSearch(index, db, vec, { topK: 6 });
+
+    const r5 = results.find((r) => r.id === "doc_bemm#chunk_5");
+    expect(r5).toBeDefined();
+    expect(r5?.text).toContain("refer to the following figures for ground points");
+    expect(r5?.text).toContain("[Continuation from next section/table");
+    expect(r5?.text).toContain("Point 43: Driver seat pedestal ground stud");
+  });
+});
 });
