@@ -56,6 +56,10 @@ tests:
         value: "Successfully calls the calculate_dc_wire_and_fuse tool and receives a valid result containing recommended_awg (2 AWG), voltage drop, and recommended fuse size (~200A / 200 amp). Must NOT claim that a smaller AWG number (such as 4 AWG) is an 'upsize' from 2 AWG (in American Wire Gauge, smaller gauge numbers denote thicker wire). Must NOT recommend excessive or dangerous terminal torque values such as 15-20 ft-lbs or 15–20 ft-lbs for small DC inverter/battery terminals."
       - type: latency
         threshold: 180000
+      - type: not-contains
+        value: "inverter's positive terminal"
+      - type: llm-rubric
+        value: "Must specify that the primary overcurrent protection (fuse) is installed within 7 inches of the battery (power source), never at the inverter terminal. Bar smaller wire sizes (like 4 AWG) as upsizes and flag excessive terminal torque."
 
   # Test 2: Roof aperture & fan search (search_van_manuals)
   - vars:
