@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import CampervanPromptfooProvider, { callMcpTool } from "../promptfoo-mcp-provider.mjs";
 
@@ -215,5 +216,26 @@ describe("Promptfoo MCP Provider (2-Turn Tool Loop & Transport Compatibility)", 
     expect(res.output).toContain("MCP Tool Result (search_van_manuals):");
     expect(res.output).toContain("doc_1#chunk_10");
     expect(res.output).toContain("CCP1 (60A) and CCP2 (175A) are located on the driver seat pedestal.");
+  });
+  it("validates promptfooconfig.yaml includes tightened assertions and anti-hallucination checks", () => {
+    const yaml = readFileSync("promptfooconfig.yaml", "utf8");
+    // Test 1: Sizing calculation anti-hallucination checks
+    expect(yaml).toContain("upsizing to 4 AWG");
+    expect(yaml).toContain("2 AWG");
+    expect(yaml).toContain("200A");
+    expect(yaml).toContain("15-20 ft-lbs");
+
+    // Test 2: Roof cut-out & torque anti-hallucination checks
+    expect(yaml).toContain("35 in-lbs");
+    expect(yaml).toContain("14\"");
+
+    // Test 3: CCP location & rating assertions
+    expect(yaml).toContain("60A");
+    expect(yaml).toContain("175A");
+    expect(yaml).toContain("seat pedestal");
+
+    // Test 4: Chassis grounding & BMS rules assertions
+    expect(yaml).toContain("BMS");
+    expect(yaml).toContain("Battery Monitoring");
   });
 });
