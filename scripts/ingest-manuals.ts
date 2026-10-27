@@ -80,6 +80,16 @@ export const CHUNK_SIZE_WORDS = 500;
 export const CHUNK_OVERLAP_WORDS = 100;
 /** Maximum character length for a single text chunk before hard-splitting. */
 export const MAX_CHUNK_CHARACTERS = 3000;
+
+/** Hard safety ceiling for characters sent to DeepInfra to avoid exceeding 512 tokens. */
+export const MAX_DEEPINFRA_INPUT_CHARS = 1600;
+
+export function sanitizeForDeepInfra(text: string, maxChars: number = MAX_DEEPINFRA_INPUT_CHARS): string {
+  if (text.length > maxChars) {
+    return text.slice(0, maxChars);
+  }
+  return text;
+}
 /** Maximum allowed UTF-8 bytes for serialized Vectorize metadata (hard limit is 10,240). */
 export const MAX_VECTORIZE_METADATA_BYTES = 9500;
 
@@ -601,13 +611,14 @@ export async function generateEmbeddings(
       );
     }
 
+    const sanitizedTexts = texts.map((t) => sanitizeForDeepInfra(t));
     const response = await fetch(DEEPINFRA_EMBEDDING_ENDPOINT, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token.trim()}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ inputs: texts }),
+      body: JSON.stringify({ inputs: sanitizedTexts }),
     });
 
     if (!response.ok) {

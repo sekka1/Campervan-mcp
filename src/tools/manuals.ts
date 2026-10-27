@@ -31,13 +31,14 @@ async function generateWorkersAiEmbedding(text: string, ai: Ai): Promise<number[
 }
 
 async function generateDeepInfraEmbedding(text: string, token: string): Promise<number[]> {
+  const sanitizedText = text.length > 1600 ? text.slice(0, 1600) : text;
   const response = await fetch("https://api.deepinfra.com/v1/inference/BAAI/bge-base-en-v1.5", {
     method: "POST",
     headers: {
       Authorization: "Bearer " + token.trim(),
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ inputs: [text] }),
+    body: JSON.stringify({ inputs: [sanitizedText] }),
   });
 
   if (!response.ok) {

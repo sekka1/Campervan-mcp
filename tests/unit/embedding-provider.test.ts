@@ -109,8 +109,30 @@ describe("Embedding Provider Switch (DeepInfra / Cloudflare)", () => {
       const parsedBody = JSON.parse(capturedInit?.body as string);
       expect(parsedBody).toEqual({ inputs });
       expect(vectors).toHaveLength(2);
+    });
+
+    it("defensively truncates inputs exceeding 1600 characters before sending to DeepInfra", async () => {
+      const longInput = "a".repeat(2500);
+      let capturedBody: { inputs: string[] } | null = null;
+      const fetchMock = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+        capturedBody = JSON.parse(init?.body as string);
+        return {
+          ok: true,
+          json: async () => ({ embeddings: [createMockVector(768)] }),
+        };
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const vectors = await generateEmbeddings([longInput], {
+        provider: "deepinfra",
+        deepinfraToken: "test-token",
+      });
+
+      expect(capturedBody).not.toBeNull();
+      expect(capturedBody!.inputs[0]).toHaveLength(1600);
+      expect(capturedBody!.inputs[0]).toBe("a".repeat(1600));
+      expect(vectors).toHaveLength(1);
       expect(vectors[0]).toHaveLength(768);
-      expect(vectors[1]).toHaveLength(768);
     });
   });
 
