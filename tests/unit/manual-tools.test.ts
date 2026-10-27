@@ -126,6 +126,37 @@ describe("registerManualTools - search_van_manuals", () => {
     expect(query).toHaveBeenCalledWith(Array(768).fill(0.33), expect.anything());
   });
 
+  it("recovers via emergency retry when DeepInfra returns 400 input tokens error during search_van_manuals", async () => {
+    const mcp = new McpServer({ name: "test-mcp", version: "1.0.0" });
+    const query = vi.fn().mockResolvedValue({ matches: [] });
+    const vectorIndex = { query } as unknown as VectorizeIndex;
+    let callCount = 0;
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          ok: false,
+          status: 400,
+          text: async () => JSON.stringify({ detail: "You passed 513 input tokens... context length is only 512 tokens." }),
+        };
+      }
+      return {
+        ok: true,
+        json: async () => ({ embeddings: [Array(768).fill(0.55)] }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    registerManualTools(mcp, vectorIndex, undefined, undefined, undefined, "mock-di-token", "deepinfra");
+    const registeredTools = (mcp as unknown as { _registeredTools: Record<string, { handler: (args: unknown) => Promise<unknown> }> })._registeredTools;
+    await registeredTools["search_van_manuals"].handler({
+      query: "Extremely long query with lots of specifications and text ".repeat(10),
+    });
+
+    expect(callCount).toBe(2);
+    expect(query).toHaveBeenCalledWith(Array(768).fill(0.55), expect.anything());
+  });
+
   it("falls back to Workers AI when DeepInfra fails and ai is provided", async () => {
     const mcp = new McpServer({ name: "test-mcp", version: "1.0.0" });
     const query = vi.fn().mockResolvedValue({ matches: [] });

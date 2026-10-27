@@ -81,14 +81,22 @@ export const CHUNK_OVERLAP_WORDS = 100;
 /** Maximum character length for a single text chunk before hard-splitting. */
 export const MAX_CHUNK_CHARACTERS = 3000;
 
-/** Hard safety ceiling for characters sent to DeepInfra to avoid exceeding 512 tokens. */
-export const MAX_DEEPINFRA_INPUT_CHARS = 1600;
+/** Hard safety ceiling for characters sent to DeepInfra to avoid exceeding 512 tokens.
+ * Technical manuals with tables and specifications have an average token length of ~2.0-2.5 characters,
+ * so 1,000 characters provides comfortable margin below 512 tokens. */
+export const MAX_DEEPINFRA_INPUT_CHARS = 1000;
+export const EMERGENCY_DEEPINFRA_INPUT_CHARS = 600;
 
 export function sanitizeForDeepInfra(text: string, maxChars: number = MAX_DEEPINFRA_INPUT_CHARS): string {
-  if (text.length > maxChars) {
-    return text.slice(0, maxChars);
+  if (text.length <= maxChars) {
+    return text;
   }
-  return text;
+  const slice = text.slice(0, maxChars);
+  const lastSpace = slice.lastIndexOf(" ");
+  if (lastSpace > maxChars * 0.8) {
+    return slice.slice(0, lastSpace);
+  }
+  return slice;
 }
 /** Maximum allowed UTF-8 bytes for serialized Vectorize metadata (hard limit is 10,240). */
 export const MAX_VECTORIZE_METADATA_BYTES = 9500;
@@ -624,6 +632,54 @@ export async function generateEmbeddings(
     if (!response.ok) {
       const errorBody = await response.text();
       console.error(`DeepInfra API error [HTTP ${response.status}]: ${errorBody}`);
+      for (let idx = 0; idx < sanitizedTexts.length; idx++) {
+        const item = sanitizedTexts[idx];
+        console.error(
+          `  [Chunk ${idx}]: length=${item.length} chars, preview=${JSON.stringify(item.slice(0, 120))}...`
+        );
+      }
+      if (
+        response.status === 400 &&
+        (errorBody.includes("input tokens") ||
+          errorBody.includes("context length") ||
+          errorBody.includes("input_tokens"))
+      ) {
+        console.warn(
+          `DeepInfra context length limit exceeded. Retrying with emergency truncation (${EMERGENCY_DEEPINFRA_INPUT_CHARS} chars)...`
+        );
+        const emergencyTexts = sanitizedTexts.map((t) =>
+          sanitizeForDeepInfra(t, EMERGENCY_DEEPINFRA_INPUT_CHARS)
+        );
+        const retryResponse = await fetch(DEEPINFRA_EMBEDDING_ENDPOINT, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token.trim()}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ inputs: emergencyTexts }),
+        });
+        if (retryResponse.ok) {
+          const retryData = (await retryResponse.json()) as {
+            embeddings: number[][];
+            usage?: { prompt_tokens: number; total_tokens: number };
+          };
+          if (
+            retryData &&
+            Array.isArray(retryData.embeddings) &&
+            retryData.embeddings.length === emergencyTexts.length
+          ) {
+            console.log(
+              `Emergency retry succeeded for ${emergencyTexts.length} chunks via DeepInfra.`
+            );
+            return retryData.embeddings;
+          }
+        } else {
+          const retryErr = await retryResponse.text();
+          console.error(
+            `Emergency retry failed [HTTP ${retryResponse.status}]: ${retryErr}`
+          );
+        }
+      }
       throw new Error(
         `DeepInfra embedding request failed with HTTP ${response.status}: ${errorBody}`
       );

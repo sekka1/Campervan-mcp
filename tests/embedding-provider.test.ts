@@ -111,8 +111,8 @@ describe("Embedding Provider Switch (DeepInfra / Cloudflare)", () => {
       expect(vectors).toHaveLength(2);
     });
 
-    it("defensively truncates inputs exceeding 1600 characters before sending to DeepInfra", async () => {
-      const longInput = "a".repeat(2500);
+    it("defensively truncates inputs exceeding 1000 characters before sending to DeepInfra", async () => {
+      const longInput = "word ".repeat(300); // 1500 chars
       let capturedBody: { inputs: string[] } | null = null;
       const fetchMock = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
         capturedBody = JSON.parse(init?.body as string);
@@ -129,8 +129,40 @@ describe("Embedding Provider Switch (DeepInfra / Cloudflare)", () => {
       });
 
       expect(capturedBody).not.toBeNull();
-      expect(capturedBody!.inputs[0]).toHaveLength(1600);
-      expect(capturedBody!.inputs[0]).toBe("a".repeat(1600));
+      expect(capturedBody!.inputs[0].length).toBeLessThanOrEqual(1000);
+      expect(capturedBody!.inputs[0].length).toBeGreaterThan(800);
+      expect(vectors).toHaveLength(1);
+      expect(vectors[0]).toHaveLength(768);
+    });
+
+    it("automatically recovers with emergency truncation when DeepInfra returns HTTP 400 input tokens error", async () => {
+      let callCount = 0;
+      let secondCallBody: { inputs: string[] } | null = null;
+      const fetchMock = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            ok: false,
+            status: 400,
+            text: async () => JSON.stringify({ detail: "You passed 513 input tokens and requested 0 output tokens. However, the model context length is only 512 tokens." }),
+          };
+        }
+        secondCallBody = JSON.parse(init?.body as string);
+        return {
+          ok: true,
+          json: async () => ({ embeddings: [createMockVector(768, 0.42)] }),
+        };
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const vectors = await generateEmbeddings(["dense technical text ".repeat(50)], {
+        provider: "deepinfra",
+        deepinfraToken: "test-token",
+      });
+
+      expect(callCount).toBe(2);
+      expect(secondCallBody).not.toBeNull();
+      expect(secondCallBody!.inputs[0].length).toBeLessThanOrEqual(600);
       expect(vectors).toHaveLength(1);
       expect(vectors[0]).toHaveLength(768);
     });
