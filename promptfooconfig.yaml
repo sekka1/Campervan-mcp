@@ -33,7 +33,7 @@ defaultTest:
 tests:
   # Test 1: Sizing calculation tool (calculate_dc_wire_and_fuse)
   - vars:
-      question: "Calculate the recommended wire gauge and fuse size for a 12V 2000W inverter with a 10ft round-trip run."
+      question: "Calculate the recommended wire gauge and fuse size for a 12V 2000W inverter with a total 10ft round-trip conductor run (5ft positive + 5ft negative)."
     assert:
       - type: contains
         value: "calculate_dc_wire_and_fuse"
