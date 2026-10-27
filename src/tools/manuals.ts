@@ -31,19 +31,54 @@ async function generateWorkersAiEmbedding(text: string, ai: Ai): Promise<number[
 }
 
 async function generateDeepInfraEmbedding(text: string, token: string): Promise<number[]> {
-  const sanitizedText = text.length > 1600 ? text.slice(0, 1600) : text;
+  const maxChars = 1000;
+  let sanitized = text;
+  if (sanitized.length > maxChars) {
+    const slice = sanitized.slice(0, maxChars);
+    const lastSpace = slice.lastIndexOf(" ");
+    sanitized = lastSpace > maxChars * 0.8 ? slice.slice(0, lastSpace) : slice;
+  }
+
   const response = await fetch("https://api.deepinfra.com/v1/inference/BAAI/bge-base-en-v1.5", {
     method: "POST",
     headers: {
       Authorization: "Bearer " + token.trim(),
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ inputs: [sanitizedText] }),
+    body: JSON.stringify({ inputs: [sanitized] }),
   });
 
   if (!response.ok) {
     const errorBody = await response.text();
     console.error("DeepInfra API error [HTTP " + response.status + "]: " + errorBody);
+    console.error(
+      "Offending query: length=" +
+        sanitized.length +
+        ", preview=" +
+        JSON.stringify(sanitized.slice(0, 120))
+    );
+    if (
+      response.status === 400 &&
+      (errorBody.includes("input tokens") ||
+        errorBody.includes("context length") ||
+        errorBody.includes("input_tokens"))
+    ) {
+      console.warn("Retrying query with emergency truncation (600 chars)...");
+      const emergencyResp = await fetch("https://api.deepinfra.com/v1/inference/BAAI/bge-base-en-v1.5", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + token.trim(),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ inputs: [sanitized.slice(0, 600)] }),
+      });
+      if (emergencyResp.ok) {
+        const emergencyData = (await emergencyResp.json()) as { embeddings: number[][] };
+        if (emergencyData && Array.isArray(emergencyData.embeddings) && Array.isArray(emergencyData.embeddings[0])) {
+          return emergencyData.embeddings[0];
+        }
+      }
+    }
     throw new Error(
       "DeepInfra embedding request failed with HTTP " + response.status + ": " + errorBody
     );
