@@ -15,6 +15,8 @@ export default defineConfig({
 			CDN_BASE_URL: bindings.text("https://pub-655d7d799988450194dfe2dc6d5b1741.r2.dev"),
 			AUTH_ENABLED: bindings.text("false"),
 			METERING_ALLOW_ALL: bindings.text("true"),
+			EMBEDDING_PROVIDER: bindings.text(process.env.EMBEDDING_PROVIDER || "deepinfra"),
+			...(process.env.DEEPINFRA_TOKEN ? { DEEPINFRA_TOKEN: bindings.text(process.env.DEEPINFRA_TOKEN) } : { DEEPINFRA_TOKEN: bindings.secret() }),
 			DB: bindings.d1({
 				name: "van_specs_db",
 				id: "2aa73cfb-cf41-4ab3-b614-b0cf1eb7ec0c",

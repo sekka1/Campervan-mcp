@@ -17,6 +17,8 @@ export interface Env {
   VECTOR_INDEX: VectorizeIndex;
   AI?: Ai;
   CDN_BASE_URL?: string;
+  DEEPINFRA_TOKEN?: string;
+  EMBEDDING_PROVIDER?: string;
   /**
    * Controls whether Bearer API-key authentication is required.
    * Currently set to "false" (disabled) in cloudflare.config.ts during testing.
@@ -88,7 +90,7 @@ export default {
 
     // Register modular tool groups
     registerElectricalTools(mcp);
-    registerManualTools(mcp, env.VECTOR_INDEX, env.AI, env.DB, env.CDN_BASE_URL);
+    registerManualTools(mcp, env.VECTOR_INDEX, env.AI, env.DB, env.CDN_BASE_URL, env.DEEPINFRA_TOKEN, env.EMBEDDING_PROVIDER);
 
     // Use stateless transport for Cloudflare Workers (no persistent sessions)
     const transport = new WebStandardStreamableHTTPServerTransport({

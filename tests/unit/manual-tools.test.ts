@@ -96,6 +96,60 @@ describe("registerManualTools - search_van_manuals", () => {
     expect(parsed.applied_filters).toEqual({ chassis: "ram_promaster" });
   });
 
+  it("generates query embedding via DeepInfra when deepinfraToken is provided", async () => {
+    const mcp = new McpServer({ name: "test-mcp", version: "1.0.0" });
+    const query = vi.fn().mockResolvedValue({ matches: [] });
+    const vectorIndex = { query } as unknown as VectorizeIndex;
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        embeddings: [Array(768).fill(0.33)],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    registerManualTools(mcp, vectorIndex, undefined, undefined, undefined, "mock-di-token", "deepinfra");
+    const registeredTools = (mcp as unknown as { _registeredTools: Record<string, { handler: (args: unknown) => Promise<unknown> }> })._registeredTools;
+    await registeredTools["search_van_manuals"].handler({
+      query: "Transit battery tap",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.deepinfra.com/v1/inference/BAAI/bge-base-en-v1.5",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer mock-di-token",
+        }),
+      })
+    );
+    expect(query).toHaveBeenCalledWith(Array(768).fill(0.33), expect.anything());
+  });
+
+  it("falls back to Workers AI when DeepInfra fails and ai is provided", async () => {
+    const mcp = new McpServer({ name: "test-mcp", version: "1.0.0" });
+    const query = vi.fn().mockResolvedValue({ matches: [] });
+    const vectorIndex = { query } as unknown as VectorizeIndex;
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: async () => "Internal server error",
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const ai = {
+      run: vi.fn().mockResolvedValue({ data: [Array(768).fill(0.77)] }),
+    } as unknown as Ai;
+
+    registerManualTools(mcp, vectorIndex, ai, undefined, undefined, "mock-di-token", "deepinfra");
+    const registeredTools = (mcp as unknown as { _registeredTools: Record<string, { handler: (args: unknown) => Promise<unknown> }> })._registeredTools;
+    await registeredTools["search_van_manuals"].handler({
+      query: "Transit battery tap",
+    });
+
+    expect(ai.run).toHaveBeenCalledWith("@cf/baai/bge-base-en-v1.5", { text: ["Transit battery tap"] });
+    expect(query).toHaveBeenCalledWith(Array(768).fill(0.77), expect.anything());
+  });
+
   it("fails fast with clear error message when Workers AI embedding throws", async () => {
     const mcp = new McpServer({ name: "test-mcp", version: "1.0.0" });
     const vectorIndex = { query: vi.fn() } as unknown as VectorizeIndex;

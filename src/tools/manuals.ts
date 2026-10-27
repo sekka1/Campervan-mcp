@@ -11,34 +11,92 @@ import { hybridSearch } from "../utils/db.js";
  * `van_manuals_index` Vectorize index populated by
  * `scripts/ingest-manuals.ts` and the ingest-manuals GitHub Actions workflow.
  */
-async function generateEmbedding(text: string, ai?: Ai): Promise<number[]> {
-  if (ai) {
-    try {
-      const response = await ai.run("@cf/baai/bge-base-en-v1.5", { text: [text] });
-      const result = response as unknown as { data: number[][] };
-      if (result && Array.isArray(result.data) && Array.isArray(result.data[0]) && result.data[0].length > 0) {
-        return result.data[0];
-      }
-      throw new Error(
-        "Workers AI returned invalid embedding response structure: " + JSON.stringify(response)
-      );
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error("Workers AI embedding error for model @cf/baai/bge-base-en-v1.5:", msg);
-      throw new Error(
-        "Failed to generate text embedding via Workers AI (@cf/baai/bge-base-en-v1.5): " + msg
-      );
+async function generateWorkersAiEmbedding(text: string, ai: Ai): Promise<number[]> {
+  try {
+    const response = await ai.run("@cf/baai/bge-base-en-v1.5", { text: [text] });
+    const result = response as unknown as { data: number[][] };
+    if (result && Array.isArray(result.data) && Array.isArray(result.data[0]) && result.data[0].length > 0) {
+      return result.data[0];
     }
+    throw new Error(
+      "Workers AI returned invalid embedding response structure: " + JSON.stringify(response)
+    );
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("Workers AI embedding error for model @cf/baai/bge-base-en-v1.5:", msg);
+    throw new Error(
+      "Failed to generate text embedding via Workers AI (@cf/baai/bge-base-en-v1.5): " + msg
+    );
+  }
+}
+
+async function generateDeepInfraEmbedding(text: string, token: string): Promise<number[]> {
+  const response = await fetch("https://api.deepinfra.com/v1/inference/BAAI/bge-base-en-v1.5", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + token.trim(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ inputs: [text] }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    console.error("DeepInfra API error [HTTP " + response.status + "]: " + errorBody);
+    throw new Error(
+      "DeepInfra embedding request failed with HTTP " + response.status + ": " + errorBody
+    );
   }
 
-  // Fallback: return zero vector only for local development/testing without an AI binding
+  const data = (await response.json()) as { embeddings: number[][] };
+  if (data && Array.isArray(data.embeddings) && Array.isArray(data.embeddings[0]) && data.embeddings[0].length === 768) {
+    return data.embeddings[0];
+  }
+  throw new Error("DeepInfra returned invalid embedding response structure: " + JSON.stringify(data));
+}
+
+export async function generateEmbedding(
+  text: string,
+  ai?: Ai,
+  deepinfraToken?: string,
+  embeddingProvider?: string
+): Promise<number[]> {
+  const provider =
+    embeddingProvider?.trim().toLowerCase() ||
+    (deepinfraToken ? "deepinfra" : (ai ? "cloudflare" : "deepinfra"));
+
+  if (provider === "deepinfra") {
+    if (deepinfraToken && deepinfraToken.trim() !== "") {
+      try {
+        return await generateDeepInfraEmbedding(text, deepinfraToken);
+      } catch (err: unknown) {
+        if (ai) {
+          console.warn("DeepInfra embedding failed, falling back to Workers AI:", err instanceof Error ? err.message : String(err));
+          return await generateWorkersAiEmbedding(text, ai);
+        }
+        throw err;
+      }
+    }
+    if (ai) {
+      console.warn("DEEPINFRA_TOKEN not set; falling back to Workers AI binding.");
+      return await generateWorkersAiEmbedding(text, ai);
+    }
+    console.warn("DEEPINFRA_TOKEN not set and env.AI unavailable; returning zero vector for local dev/testing.");
+    return new Array(768).fill(0) as number[];
+  }
+
+  // Cloudflare Workers AI
+  if (ai) {
+    return await generateWorkersAiEmbedding(text, ai);
+  }
+
   console.warn(
     "Workers AI binding (env.AI) is unavailable; returning zero vector for local dev/testing."
   );
   return new Array(768).fill(0) as number[];
 }
 
-export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex, ai?: Ai, db?: D1Database, cdnBaseUrl?: string): void {
+export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex, ai?: Ai, db?: D1Database, cdnBaseUrl?: string, deepinfraToken?: string, embeddingProvider?: string): void {
   // -------------------------------------------------------------------------
   // Tool: search_van_manuals
   // -------------------------------------------------------------------------
@@ -100,7 +158,7 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
       },
     },
     async (args) => {
-      const queryVector = await generateEmbedding(args.query, ai);
+      const queryVector = await generateEmbedding(args.query, ai, deepinfraToken, embeddingProvider);
 
       const results = await hybridSearch(vectorIndex, db, queryVector, {
         topK: args.top_k ?? 8,
