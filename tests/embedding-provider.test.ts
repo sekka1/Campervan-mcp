@@ -272,6 +272,54 @@ describe("Embedding Provider Switch (DeepInfra / Cloudflare)", () => {
   });
 
   describe("6. Edge Cases & API Failures", () => {
+    it("handles positional call with string accountId when EMBEDDING_PROVIDER is deepinfra", async () => {
+      process.env.EMBEDDING_PROVIDER = "deepinfra";
+      process.env.DEEPINFRA_TOKEN = "token-pos";
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ embeddings: [createMockVector(768)] }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const res = await generateEmbeddings(["text"], "acct123", "token123");
+      expect(res).toHaveLength(1);
+    });
+
+    it("throws when DeepInfra response has non-array embeddings", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ embeddings: "not-array" }),
+      }));
+      await expect(generateEmbeddings(["text"], { provider: "deepinfra", deepinfraToken: "tok" }))
+        .rejects.toThrow(/missing 'embeddings' array/);
+    });
+
+    it("throws when DeepInfra vector item is not an array", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ embeddings: [123] }),
+      }));
+      await expect(generateEmbeddings(["text"], { provider: "deepinfra", deepinfraToken: "tok" }))
+        .rejects.toThrow(/Expected embedding vector of dimension 768/);
+    });
+
+    it("throws when Cloudflare result.data is not an array", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ result: { data: null }, success: true }),
+      }));
+      await expect(generateEmbeddings(["text"], { provider: "cloudflare", cloudflareAccountId: "a", cloudflareApiToken: "t" }))
+        .rejects.toThrow(/missing 'result.data'/);
+    });
+
+    it("throws when Cloudflare vector item is not an array", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ result: { data: ["invalid"] }, success: true }),
+      }));
+      await expect(generateEmbeddings(["text"], { provider: "cloudflare", cloudflareAccountId: "a", cloudflareApiToken: "t" }))
+        .rejects.toThrow(/Expected embedding vector of dimension 768/);
+    });
+
     it("returns empty array immediately if texts array is empty", async () => {
       const fetchMock = vi.fn();
       vi.stubGlobal("fetch", fetchMock);

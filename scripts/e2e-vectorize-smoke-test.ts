@@ -123,7 +123,7 @@ async function main(): Promise<void> {
 
     // 4. Generate embeddings and upsert into Vectorize.
     console.log("[4/7] Generating embeddings and upserting into Vectorize...");
-    const embeddings = await generateEmbeddings(chunks.map((c) => c.text), accountId, apiToken);
+    const embeddings = await generateEmbeddings(chunks.map((c) => c.text));
     const vectors: VectorizeVector[] = chunks.map((chunk, i) => ({
       id: chunk.id,
       values: embeddings[i],

@@ -39,6 +39,8 @@ jobs:
 
       - name: Run Real R2 + Vectorize E2E Smoke Test
         env:
+          EMBEDDING_PROVIDER: ${{ vars.EMBEDDING_PROVIDER || 'deepinfra' }}
+          DEEPINFRA_TOKEN: ${{ secrets.DEEPINFRA_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
