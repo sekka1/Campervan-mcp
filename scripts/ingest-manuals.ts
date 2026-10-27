@@ -56,6 +56,20 @@ import {
 export const CLOUDFLARE_API_BASE =
   process.env["CF_API_BASE_URL"] ?? "https://api.cloudflare.com/client/v4/accounts";
 export const EMBEDDING_MODEL = "@cf/baai/bge-base-en-v1.5";
+export type EmbeddingProvider = "deepinfra" | "cloudflare";
+
+export interface EmbeddingOptions {
+  provider?: EmbeddingProvider;
+  deepinfraToken?: string;
+  cloudflareAccountId?: string;
+  cloudflareApiToken?: string;
+  batchSize?: number;
+}
+
+export const DEEPINFRA_EMBEDDING_ENDPOINT =
+  "https://api.deepinfra.com/v1/inference/BAAI/bge-base-en-v1.5";
+export const EMBEDDING_DIMENSION = 768;
+
 export const VECTORIZE_INDEX_NAME = "van_manuals_index";
 
 export const CHUNK_SIZE_CHARS = 500;
@@ -543,26 +557,146 @@ export function describeApiFailure(status: number, body: string): string {
 
 export async function generateEmbeddings(
   texts: string[],
-  accountId: string,
-  apiToken: string
+  optionsOrAccountId?: EmbeddingOptions | string,
+  maybeApiToken?: string
 ): Promise<number[][]> {
-  const response = await fetch(`${CLOUDFLARE_API_BASE}/${accountId}/ai/run/${EMBEDDING_MODEL}`, {
+  if (!texts || texts.length === 0) {
+    return [];
+  }
+
+  let options: EmbeddingOptions;
+  if (typeof optionsOrAccountId === "string") {
+    const envProvider = process.env["EMBEDDING_PROVIDER"]?.trim().toLowerCase() as EmbeddingProvider;
+    options = {
+      provider: envProvider || "cloudflare",
+      cloudflareAccountId: optionsOrAccountId,
+      cloudflareApiToken: maybeApiToken,
+      deepinfraToken: process.env["DEEPINFRA_TOKEN"],
+    };
+  } else {
+    options = optionsOrAccountId || {};
+  }
+
+  const envProvider = process.env["EMBEDDING_PROVIDER"]?.trim().toLowerCase() as EmbeddingProvider;
+  const rawProvider =
+    options.provider ||
+    envProvider ||
+    (options.deepinfraToken || process.env["DEEPINFRA_TOKEN"]
+      ? "deepinfra"
+      : (options.cloudflareAccountId || process.env["CLOUDFLARE_ACCOUNT_ID"]
+        ? "cloudflare"
+        : "deepinfra"));
+
+  if (rawProvider !== "deepinfra" && rawProvider !== "cloudflare") {
+    throw new Error(
+      `Unsupported embedding provider: '${rawProvider}'. Allowed values are 'deepinfra' or 'cloudflare'.`
+    );
+  }
+
+  if (rawProvider === "deepinfra") {
+    const token = options.deepinfraToken || process.env["DEEPINFRA_TOKEN"];
+    if (!token || token.trim() === "") {
+      throw new Error(
+        "Missing credential for DeepInfra: DEEPINFRA_TOKEN is required when EMBEDDING_PROVIDER is 'deepinfra'."
+      );
+    }
+
+    const response = await fetch(DEEPINFRA_EMBEDDING_ENDPOINT, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token.trim()}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ inputs: texts }),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error(`DeepInfra API error [HTTP ${response.status}]: ${errorBody}`);
+      throw new Error(
+        `DeepInfra embedding request failed with HTTP ${response.status}: ${errorBody}`
+      );
+    }
+
+    const data = (await response.json()) as {
+      embeddings: number[][];
+      usage?: { prompt_tokens: number; total_tokens: number };
+    };
+    if (!data || !Array.isArray(data.embeddings)) {
+      throw new Error(`DeepInfra response missing 'embeddings' array: ${JSON.stringify(data)}`);
+    }
+
+    for (let i = 0; i < data.embeddings.length; i++) {
+      const vec = data.embeddings[i];
+      if (!Array.isArray(vec) || vec.length !== EMBEDDING_DIMENSION) {
+        throw new Error(
+          `Dimensionality mismatch: Expected embedding vector of dimension ${EMBEDDING_DIMENSION}, but received ${Array.isArray(vec) ? vec.length : typeof vec}.`
+        );
+      }
+    }
+
+    return data.embeddings;
+  }
+
+  // Cloudflare Workers AI
+  const accountId = options.cloudflareAccountId || process.env["CLOUDFLARE_ACCOUNT_ID"];
+  const apiToken = options.cloudflareApiToken || process.env["CLOUDFLARE_API_TOKEN"];
+
+  if (!accountId || accountId.trim() === "" || !apiToken || apiToken.trim() === "") {
+    const missing = [];
+    if (!accountId || accountId.trim() === "") missing.push("CLOUDFLARE_ACCOUNT_ID");
+    if (!apiToken || apiToken.trim() === "") missing.push("CLOUDFLARE_API_TOKEN");
+    throw new Error(
+      `Missing credential(s) for Cloudflare Workers AI: ${missing.join(", ")} required when EMBEDDING_PROVIDER is 'cloudflare'.`
+    );
+  }
+
+  const response = await fetch(`${CLOUDFLARE_API_BASE}/${accountId.trim()}/ai/run/${EMBEDDING_MODEL}`, {
     method: "POST",
     headers: {
-      Authorization: "Bearer " + apiToken,
+      Authorization: `Bearer ${apiToken.trim()}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ text: texts }),
   });
 
   if (!response.ok) {
+    const errorBody = await response.text();
+    console.error(`Cloudflare Workers AI API error [HTTP ${response.status}]: ${errorBody}`);
     throw new Error(
-      `Workers AI embedding request failed: ${describeApiFailure(response.status, await response.text())}`
+      `Workers AI embedding request failed: ${describeApiFailure(response.status, errorBody)}`
     );
   }
 
-  const data = (await response.json()) as { result: { data: number[][] } };
-  return data.result.data;
+  const data = (await response.json()) as {
+    result: { data: number[][] };
+    success?: boolean;
+    errors?: unknown[];
+  };
+
+  if (data.success === false) {
+    throw new Error(
+      `Cloudflare Workers AI returned success=false: ${JSON.stringify(data.errors || data)}`
+    );
+  }
+
+  const vectors = data.result?.data;
+  if (!Array.isArray(vectors)) {
+    throw new Error(
+      `Cloudflare Workers AI response missing 'result.data': ${JSON.stringify(data)}`
+    );
+  }
+
+  for (let i = 0; i < vectors.length; i++) {
+    const vec = vectors[i];
+    if (!Array.isArray(vec) || vec.length !== EMBEDDING_DIMENSION) {
+      throw new Error(
+        `Dimensionality mismatch: Expected embedding vector of dimension ${EMBEDDING_DIMENSION}, but received ${Array.isArray(vec) ? vec.length : typeof vec}.`
+      );
+    }
+  }
+
+  return vectors;
 }
 
 // ---------------------------------------------------------------------------
@@ -1102,8 +1236,10 @@ export async function processAddedModifiedFile(
   for (const batch of batchArray(chunks, EMBEDDING_BATCH_SIZE)) {
     const embeddings = await generateEmbeddings(
       batch.map((chunk) => chunk.text),
-      accountId,
-      apiToken
+      {
+        cloudflareAccountId: accountId,
+        cloudflareApiToken: apiToken,
+      }
     );
 
     const vectors: VectorizeVector[] = batch.map((chunk, idx) => ({
