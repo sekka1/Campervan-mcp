@@ -37,8 +37,23 @@ tests:
     assert:
       - type: contains
         value: "calculate_dc_wire_and_fuse"
+      - type: not-contains
+        value: "upsizing to 4 AWG"
+      - type: contains-any
+        value:
+          - "2 AWG"
+          - "2AWG"
+          - "#2 AWG"
+          - "2 gauge"
+      - type: contains-any
+        value:
+          - "200A"
+          - "200 A"
+          - "200 amp"
+          - "200-amp"
+          - "200 Amp"
       - type: llm-rubric
-        value: "Successfully calls the calculate_dc_wire_and_fuse tool and receives a valid result containing recommended_awg, voltage drop, and recommended fuse size."
+        value: "Successfully calls the calculate_dc_wire_and_fuse tool and receives a valid result containing recommended_awg (2 AWG), voltage drop, and recommended fuse size (~200A / 200 amp). Must NOT claim that a smaller AWG number (such as 4 AWG) is an 'upsize' from 2 AWG (in American Wire Gauge, smaller gauge numbers denote thicker wire). Must NOT recommend excessive or dangerous terminal torque values such as 15-20 ft-lbs or 15–20 ft-lbs for small DC inverter/battery terminals."
       - type: latency
         threshold: 180000
 
@@ -48,8 +63,18 @@ tests:
     assert:
       - type: contains
         value: "search_van_manuals"
+      - type: not-contains
+        value: "35 in-lbs"
+      - type: contains-any
+        value:
+          - "14\""
+          - "14 x 14"
+          - "14\" x 14\""
+          - "14-inch"
+          - "14 inch"
+          - "14 inches"
       - type: llm-rubric
-        value: "Successfully invokes the search_van_manuals tool and retrieves relevant manual chunks or specifications from the documentation database."
+        value: "Successfully invokes search_van_manuals tool and identifies standard 14\" x 14\" (or 14-inch) cut-out dimensions. Evaluates whether the model honestly discloses the lack of an official numeric torque specification in the manufacturer manual (which advises snug or hand-tight to compress the seal without distorting the plastic flange) rather than inventing an in-lb/Nm figure (such as 35 in-lbs) or citing fictitious document numbers."
       - type: latency
         threshold: 180000
 
@@ -59,6 +84,28 @@ tests:
     assert:
       - type: contains
         value: "search_van_manuals"
+      - type: contains-any
+        value:
+          - "60A"
+          - "60 A"
+          - "60 amp"
+          - "60-amp"
+          - "60"
+      - type: contains-any
+        value:
+          - "175A"
+          - "175 A"
+          - "175 amp"
+          - "175-amp"
+          - "175"
+      - type: contains-any
+        value:
+          - "seat pedestal"
+          - "seat base"
+          - "driver's seat pedestal"
+          - "driver seat pedestal"
+          - "driver's seat base"
+          - "driver seat base"
       - type: llm-rubric
         value: "Invokes search_van_manuals, correctly identifies the location as the driver's seat pedestal (or driver's seat base), and accurately states the ratings: CCP1 is 60A and CCP2 is 175A."
       - type: latency
@@ -70,7 +117,23 @@ tests:
     assert:
       - type: contains
         value: "search_van_manuals"
+      - type: contains-any
+        value:
+          - "BMS"
+          - "Battery Monitoring Sensor"
+          - "battery monitoring sensor"
+          - "Battery Monitoring System"
+          - "battery monitoring system"
+          - "Battery Monitoring"
+          - "battery monitoring"
+      - type: contains-any
+        value:
+          - "seat pedestal"
+          - "seat base"
+          - "ground point"
+          - "ground stud"
+          - "chassis ground"
       - type: llm-rubric
-        value: "Invokes search_van_manuals, identifies approved Ford Transit ground locations (such as the driver's seat pedestal/base ground stud or pillar ground points), and warns that auxiliary negatives must connect to designated chassis ground studs rather than bypassing the Battery Monitoring Sensor (BMS) on the negative terminal."
+        value: "Invokes search_van_manuals, identifies approved Ford Transit ground locations (such as the driver's seat pedestal/base ground stud or pillar ground points), and warns that auxiliary negatives must connect to designated chassis ground studs rather than connecting directly to the battery negative terminal or bypassing the Battery Monitoring Sensor (BMS)."
       - type: latency
         threshold: 180000
