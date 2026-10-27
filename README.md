@@ -342,3 +342,19 @@ Benchmark evaluations (`promptfooconfig.yaml` via `scripts/promptfoo-mcp-provide
 - **Turn 1:** The candidate LLM invokes live MCP tools (`calculate_dc_wire_and_fuse`, `search_van_manuals`).
 - **Turn 2:** Tool results are fed back into the model conversation so it synthesizes a final engineering answer.
 - Both the `MCP Tool Result (...)` trace and the final answer are output, passing both tool invocation assertions and model-graded LLM rubrics.
+
+## Embedding Configuration
+
+The embedding pipeline supports a configurable provider switch between **DeepInfra** and **Cloudflare Workers AI**. Both backends generate identical **768-dimensional vectors** using the `BAAI/bge-base-en-v1.5` architecture (`@cf/baai/bge-base-en-v1.5` on Cloudflare), preventing index drift across Vectorize/D1.
+
+### Provider Toggle
+
+Set the `EMBEDDING_PROVIDER` environment variable to either `"deepinfra"` or `"cloudflare"`. If unset or empty, the pipeline defaults to `"deepinfra"`.
+
+```bash
+# Default (DeepInfra)
+DEEPINFRA_TOKEN="xxx" npx tsx scripts/sync-r2-manuals.ts
+
+# Fallback (Cloudflare Workers AI)
+EMBEDDING_PROVIDER="cloudflare" CLOUDFLARE_ACCOUNT_ID="xxx" CLOUDFLARE_API_TOKEN="xxx" npx tsx scripts/sync-r2-manuals.ts
+```

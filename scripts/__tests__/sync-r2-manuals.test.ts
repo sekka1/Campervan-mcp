@@ -697,9 +697,11 @@ describe("buildCanonicalManualName & R2 Object Renaming", () => {
           { status: 200, headers: { "Content-Type": "application/json" } }
         );
       }
-      if (urlStr.includes("/ai/run/")) {
+      if (urlStr.includes("/ai/run/") || urlStr.includes("/inference/")) {
         const body = JSON.parse(init?.body as string);
-        return new Response(JSON.stringify({ result: { data: body.text.map(() => Array(768).fill(0.1)) } }), {
+        const count = body.text ? body.text.length : (body.inputs ? body.inputs.length : 1);
+        const embeddings = Array(count).fill(Array(768).fill(0.1));
+        return new Response(JSON.stringify({ result: { data: embeddings }, embeddings }), {
           status: 200,
         });
       }

@@ -372,8 +372,10 @@ export async function processAddedModifiedR2Object(
   for (const batch of batchArray(chunks, EMBEDDING_BATCH_SIZE)) {
     const embeddings = await generateEmbeddings(
       batch.map((chunk) => chunk.text),
-      accountId,
-      apiToken
+      {
+        cloudflareAccountId: accountId,
+        cloudflareApiToken: apiToken,
+      }
     );
     const vectors: VectorizeVector[] = batch.map((chunk, idx) => ({
       id: chunk.id,
