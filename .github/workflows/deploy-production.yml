@@ -44,6 +44,8 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEEPINFRA_TOKEN: ${{ secrets.DEEPINFRA_TOKEN }}
+          EMBEDDING_PROVIDER: ${{ vars.EMBEDDING_PROVIDER || 'deepinfra' }}
 
       - name: Test Deployed MCP Endpoints
         env:
