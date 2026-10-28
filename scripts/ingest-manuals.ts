@@ -1378,6 +1378,7 @@ export async function runIngestion(options: IngestOptions): Promise<void> {
 // Entry Point
 // ---------------------------------------------------------------------------
 
+/* c8 ignore start */
 const isMainModule =
   (typeof require !== "undefined" && require.main === module) ||
   (Boolean(process.argv[1]) &&

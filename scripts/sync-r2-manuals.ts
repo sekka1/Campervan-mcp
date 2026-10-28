@@ -528,6 +528,7 @@ export async function runSync(options: SyncOptions): Promise<void> {
 // Entry Point
 // ---------------------------------------------------------------------------
 
+/* c8 ignore start */
 const isMainModule =
   (typeof require !== "undefined" && require.main === module) ||
   (Boolean(process.argv[1]) &&
