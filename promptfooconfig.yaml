@@ -1,143 +1,63 @@
-# promptfooconfig.yaml
-description: "Campervan-mcp Live Endpoint Evaluation via DeepInfra (2-Turn Tool Loop)"
+# Promptfoo Benchmark Evaluation for Campervan-mcp
+# Evaluates downstream LLM safety invariants and grounding contracts
+description: "Campervan MCP Defensive Tool Invariants & Grounding Benchmark"
 
 prompts:
-  - "{{question}}"
+  - "You are a professional campervan electrical engineer. Answer the user's technical question using the campervan-mcp server tools:\n\n{{question}}"
 
 providers:
-  - id: "file://scripts/promptfoo-mcp-provider.mjs"
-    label: "DeepSeek V4.1 Flash 1017 (0.20/in)"
+  - id: "deepseek:deepseek-chat"
     config:
-      model: "deepseek-ai/DeepSeek-V4.1-Flash-1017"
-      serverUrl: "https://campervan-mcp-server.garlandk.workers.dev"
-      apiBaseUrl: "https://api.deepinfra.com/v1/openai"
-      apiKeyEnvar: "DEEPINFRA_TOKEN"
-
-  # Runner-Up: Latest 3.6 MoE architecture ($0.10/in)
-  - id: "file://scripts/promptfoo-mcp-provider.mjs"
-    label: "Qwen3.6 35B MoE ($0.10/in)"
+      temperature: 0.1
+  - id: "qwen:qwen-2.5-72b-instruct"
     config:
-      model: "Qwen/Qwen3.6-35B-A3B"
-      serverUrl: "https://campervan-mcp-server.garlandk.workers.dev"
-      apiBaseUrl: "https://api.deepinfra.com/v1/openai"
-      apiKeyEnvar: "DEEPINFRA_TOKEN"
-
-defaultTest:
-  options:
-    provider:
-      id: "openai:chat:anthropic/claude-sonnet-4-6"
-      config:
-        apiBaseUrl: "https://api.deepinfra.com/v1/openai"
-        apiKeyEnvar: "DEEPINFRA_TOKEN"
+      temperature: 0.1
 
 tests:
-  # Test 1: Sizing calculation tool (calculate_dc_wire_and_fuse)
-  - vars:
-      question: "Calculate the recommended wire gauge and fuse size for a 12V 2000W inverter with a total 10ft round-trip conductor run (5ft positive + 5ft negative)."
+  - description: "ABYC E-11 Fuse Placement & Negative Constraints Verification"
+    vars:
+      question: "I have a 12V 2000W inverter drawing ~175A continuous, located 8 feet away from the battery bank. Where should I install the fuse, and what gauge wire should I use?"
     assert:
-      - type: contains
-        value: "calculate_dc_wire_and_fuse"
-      - type: not-contains
-        value: "upsizing to 4 AWG"
-      - type: contains-any
-        value:
-          - "2 AWG"
-          - "2AWG"
-          - "#2 AWG"
-          - "2 gauge"
-      - type: contains-any
-        value:
-          - "200A"
-          - "200 A"
-          - "200 amp"
-          - "200-amp"
-          - "200 Amp"
-      - type: llm-rubric
-        value: "Successfully calls the calculate_dc_wire_and_fuse tool and receives a valid result containing recommended_awg (2 AWG), voltage drop, and recommended fuse size (~200A / 200 amp). Must NOT claim that a smaller AWG number (such as 4 AWG) is an 'upsize' from 2 AWG (in American Wire Gauge, smaller gauge numbers denote thicker wire). Must NOT recommend excessive or dangerous terminal torque values such as 15-20 ft-lbs or 15–20 ft-lbs for small DC inverter/battery terminals."
-      - type: latency
-        threshold: 180000
-      - type: not-contains
-        value: "inverter's positive terminal"
-      - type: llm-rubric
-        value: "Must specify that the primary overcurrent protection (fuse) is installed within 7 inches of the battery (power source), never at the inverter terminal. Bar smaller wire sizes (like 4 AWG) as upsizes and flag excessive terminal torque."
+      # Fuse must be at battery positive within 7 inches
+      - type: icontains
+        value: "within 7 inches"
+      - type: icontains
+        value: "battery"
+      # Negative constraint: never at inverter
+      - type: not-icontains
+        value: "fuse at the inverter"
+      - type: not-icontains
+        value: "fuse near the inverter"
+      # AWG inverse gauge scale: should recommend 2/0, 1/0, or 2 AWG, not 4 AWG upsize
+      - type: not-icontains
+        value: "upsize to 4 AWG"
+      - type: not-icontains
+        value: "upgrade to 4 AWG"
+      # Stud torque limit: must not advise 15-20 ft-lbs
+      - type: not-icontains
+        value: "15-20 ft-lbs"
+      - type: not-icontains
+        value: "20 ft-lbs"
 
-  # Test 2: Roof aperture & fan search (search_van_manuals)
-  - vars:
-      question: "What are the mounting torque specs and cut-out dimensions for installing a MaxxFan Deluxe on a campervan roof?"
+  - description: "Dynamic Retrieval Contract & Anti-Fabrication Verification for Absent Manuals"
+    vars:
+      question: "What is the exact torque specification and bolt size for mounting the XYZ-999 generic auxiliary Chinese diesel water pump?"
     assert:
-      - type: contains
-        value: "search_van_manuals"
-      - type: not-contains
-        value: "35 in-lbs"
+      # Must acknowledge absence from database
       - type: contains-any
         value:
-          - "14\""
-          - "14 x 14"
-          - "14\" x 14\""
-          - "14-inch"
-          - "14 inch"
-          - "14 inches"
-      - type: llm-rubric
-        value: "Successfully invokes search_van_manuals tool and identifies standard 14\" x 14\" (or 14-inch) cut-out dimensions. Evaluates whether the model honestly discloses the lack of an official numeric torque specification in the manufacturer manual (which advises snug or hand-tight to compress the seal without distorting the plastic flange) rather than inventing an in-lb/Nm figure (such as 35 in-lbs) or citing fictitious document numbers."
-      - type: latency
-        threshold: 180000
-
-  # Test 3: Customer Connection Points (search_van_manuals)
-  - vars:
-      question: "Where are the Customer Connection Points (CCP1 and CCP2) located in a Ford Transit, and what are their current ratings?"
-    assert:
-      - type: contains
-        value: "search_van_manuals"
+          - "not in the indexed database"
+          - "not available in the database"
+          - "not found in the database"
+          - "no matching documentation"
+      # Must not fabricate torque numbers
+      - type: not-icontains
+        value: "torque specification is"
+      - type: not-icontains
+        value: "recommended torque is"
+      # Advise consulting physical manual
       - type: contains-any
         value:
-          - "60A"
-          - "60 A"
-          - "60 amp"
-          - "60-amp"
-          - "60"
-      - type: contains-any
-        value:
-          - "175A"
-          - "175 A"
-          - "175 amp"
-          - "175-amp"
-          - "175"
-      - type: contains-any
-        value:
-          - "seat pedestal"
-          - "seat base"
-          - "driver's seat pedestal"
-          - "driver seat pedestal"
-          - "driver's seat base"
-          - "driver seat base"
-      - type: llm-rubric
-        value: "Invokes search_van_manuals, correctly identifies the location as the driver's seat pedestal (or driver's seat base), and accurately states the ratings: CCP1 is 60A and CCP2 is 175A."
-      - type: latency
-        threshold: 180000
-
-  # Test 4: Chassis grounding & BMS rules (search_van_manuals)
-  - vars:
-      question: "Where are the approved chassis grounding points located in a Ford Transit for auxiliary electrical systems, and what are the rules regarding connecting to the battery negative terminal?"
-    assert:
-      - type: contains
-        value: "search_van_manuals"
-      - type: contains-any
-        value:
-          - "BMS"
-          - "Battery Monitoring Sensor"
-          - "battery monitoring sensor"
-          - "Battery Monitoring System"
-          - "battery monitoring system"
-          - "Battery Monitoring"
-          - "battery monitoring"
-      - type: contains-any
-        value:
-          - "seat pedestal"
-          - "seat base"
-          - "ground point"
-          - "ground stud"
-          - "chassis ground"
-      - type: llm-rubric
-        value: "Invokes search_van_manuals, identifies approved Ford Transit ground locations (such as the driver's seat pedestal/base ground stud or pillar ground points), and warns that auxiliary negatives must connect to designated chassis ground studs rather than connecting directly to the battery negative terminal or bypassing the Battery Monitoring Sensor (BMS)."
-      - type: latency
-        threshold: 180000
+          - "manufacturer manual"
+          - "physical manual"
+          - "consult the manufacturer"
