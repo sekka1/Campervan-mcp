@@ -1,15 +1,33 @@
-/**
- * Campervan MCP Server - Edge Runtime Entrypoint
- * Provides MCP tool registration and JSON-RPC 2.0 handlers for LLMs
- * with embedded safety invariants and strict retrieval grounding contracts.
- */
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { registerElectricalTools } from "./tools/electrical.js";
+import { registerManualTools, searchVanManuals, SearchFilterOptions, SearchVanManualsResponse } from "./tools/manuals.js";
+import {
+  extractBearerToken,
+  extractMeteredToolCalls,
+  authenticateAndCheckBalance,
+  recordBatchToolUsage,
+  isAuthEnabled,
+  isMeteringAllowAll,
+  type MeteredToolCall,
+} from "./utils/metering.js";
+import { calculateDCWireAndFuse, WireCalculationParams, WireCalculationResult } from "./utils/formulas.js";
 
-import { calculateDcWireAndFuse, WireCalculationParams } from "./tools/calculations.ts";
-import { searchVanManuals, SearchFilterOptions, Env } from "./tools/manuals.ts";
+export { calculateDCWireAndFuse as calculateDcWireAndFuse, calculateDCWireAndFuse };
+export { searchVanManuals };
+export type { WireCalculationParams, WireCalculationResult, SearchFilterOptions, SearchVanManualsResponse };
 
-export { calculateDcWireAndFuse } from "./tools/calculations.ts";
-export { searchVanManuals } from "./tools/manuals.ts";
-export type { Env };
+export interface Env {
+  DB: D1Database;
+  VECTOR_INDEX: VectorizeIndex;
+  AI?: Ai;
+  CDN_BASE_URL?: string;
+  DEEPINFRA_TOKEN?: string;
+  EMBEDDING_PROVIDER?: string;
+  AUTH_ENABLED?: string;
+  METERING_ALLOW_ALL?: string;
+  [key: string]: unknown;
+}
 
 export const MCP_TOOLS = [
   {
@@ -25,28 +43,28 @@ IMPORTANT SAFETY INSTRUCTIONS FOR LLM CONSUMERS:
         system_voltage: {
           type: "number",
           enum: [12, 24, 48],
-          description: "Nominal DC system voltage (12V, 24V, or 48V)."
+          description: "Nominal DC system voltage in volts: 12, 24, or 48",
         },
         amperage: {
           type: "number",
-          description: "Continuous current draw in Amperes."
+          description: "Circuit design current or continuous load in amps",
         },
         one_way_distance_feet: {
           type: "number",
-          description: "One-way distance in feet between power source and load."
+          description: "One-way cable run distance in feet from source to load",
         },
         allowable_drop_percent: {
           type: "number",
           enum: [3, 10],
-          description: "Allowable voltage drop percentage (3% for critical loads/electronics, 10% for non-critical loads)."
+          description: "Maximum allowable voltage drop percentage: 3% for critical circuits, 10% for non-critical",
         },
         is_engine_compartment: {
           type: "boolean",
-          description: "Whether conductors run through engine compartment requiring 105°C ambient thermal derating."
-        }
+          description: "Whether the cable run passes through an engine compartment",
+        },
       },
-      required: ["system_voltage", "amperage", "one_way_distance_feet", "allowable_drop_percent"]
-    }
+      required: ["system_voltage", "amperage", "one_way_distance_feet"],
+    },
   },
   {
     name: "search_van_manuals",
@@ -59,65 +77,75 @@ IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
       properties: {
         query: {
           type: "string",
-          description: "Technical search query or specification question."
+          description: "Natural language search query",
         },
         chassis: {
           type: "string",
-          enum: ["ford_transit", "mercedes_sprinter", "ram_promaster", "universal"],
-          description: "Target van platform."
+          description: "Optional chassis filter (e.g., 'transit', 'sprinter', 'promaster')",
         },
         subsystem: {
           type: "string",
-          enum: [
-            "12v_dc",
-            "48v_dc",
-            "120v_ac",
-            "plumbing",
-            "heating_cooling",
-            "structural",
-            "chassis_interface"
-          ],
-          description: "Target technical subsystem."
+          description: "Optional subsystem filter",
         },
         manufacturer: {
           type: "string",
-          description: "Equipment manufacturer (e.g., Ford, Victron, Dometic, Espar)."
+          description: "Optional manufacturer filter",
         },
         limit: {
           type: "number",
-          description: "Maximum number of chunks to return (default 3)."
-        }
+          description: "Number of most relevant document chunks to return",
+        },
       },
-      required: ["query"]
-    }
-  }
+      required: ["query"],
+    },
+  },
 ];
 
+export interface JsonRpcRequest {
+  jsonrpc?: string;
+  id?: string | number | null;
+  method?: string;
+  params?: {
+    name?: string;
+    arguments?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+}
+
+export interface JsonRpcResponse {
+  jsonrpc: "2.0";
+  id?: string | number | null;
+  result?: Record<string, unknown>;
+  error?: {
+    code: number;
+    message: string;
+    data?: unknown;
+  };
+}
+
 export async function handleMcpRequest(
-  body: any,
+  body: JsonRpcRequest,
   env?: Env,
   _accountId?: string
-): Promise<any> {
+): Promise<JsonRpcResponse> {
   const { id, method, params } = body;
 
-  // MCP Protocol Tool Discovery
   if (method === "tools/list") {
     return {
       jsonrpc: "2.0",
       id,
       result: {
-        tools: MCP_TOOLS
-      }
+        tools: MCP_TOOLS,
+      },
     };
   }
 
-  // MCP Protocol Tool Call
   if (method === "tools/call") {
     const { name, arguments: args } = params || {};
 
     if (name === "calculate_dc_wire_and_fuse") {
       try {
-        const result = calculateDcWireAndFuse(args as WireCalculationParams);
+        const result = calculateDCWireAndFuse(args as unknown as WireCalculationParams);
         return {
           jsonrpc: "2.0",
           id,
@@ -125,20 +153,20 @@ export async function handleMcpRequest(
             content: [
               {
                 type: "text",
-                text: JSON.stringify(result, null, 2)
-              }
+                text: JSON.stringify(result, null, 2),
+              },
             ],
-            structured: result
-          }
+            structured: result as unknown as Record<string, unknown>,
+          },
         };
-      } catch (err: any) {
+      } catch (err) {
         return {
           jsonrpc: "2.0",
           id,
           error: {
             code: -32602,
-            message: err?.message || "Invalid wire calculation parameters"
-          }
+            message: err instanceof Error ? err.message : "Invalid wire calculation parameters",
+          },
         };
       }
     }
@@ -146,12 +174,12 @@ export async function handleMcpRequest(
     if (name === "search_van_manuals") {
       try {
         const filterOptions: SearchFilterOptions = {
-          chassis: args?.chassis,
-          subsystem: args?.subsystem,
-          manufacturer: args?.manufacturer,
-          limit: args?.limit
+          chassis: args?.chassis as string | undefined,
+          subsystem: args?.subsystem as string | undefined,
+          manufacturer: args?.manufacturer as string | undefined,
+          limit: args?.limit as number | undefined,
         };
-        const result = await searchVanManuals(args?.query, env, filterOptions);
+        const result = await searchVanManuals(args?.query as string, env, filterOptions);
         return {
           jsonrpc: "2.0",
           id,
@@ -159,96 +187,164 @@ export async function handleMcpRequest(
             content: [
               {
                 type: "text",
-                text: JSON.stringify(result, null, 2)
-              }
+                text: JSON.stringify(result, null, 2),
+              },
             ],
-            structured: result
-          }
+            structured: result as unknown as Record<string, unknown>,
+          },
         };
-      } catch (err: any) {
+      } catch (err) {
         return {
           jsonrpc: "2.0",
           id,
           error: {
             code: -32603,
-            message: err?.message || "Error executing manuals search"
-          }
+            message: err instanceof Error ? err.message : "Error executing manuals search",
+          },
         };
       }
     }
-
-    return {
-      jsonrpc: "2.0",
-      id,
-      error: {
-        code: -32601,
-        message: `Tool '${name}' not found.`
-      }
-    };
-  }
-
-  // MCP Handshake initialization
-  if (method === "initialize") {
-    return {
-      jsonrpc: "2.0",
-      id,
-      result: {
-        protocolVersion: "2024-11-05",
-        capabilities: {
-          tools: { listChanged: false }
-        },
-        serverInfo: {
-          name: "campervan-mcp",
-          version: "1.0.0"
-        }
-      }
-    };
   }
 
   return {
     jsonrpc: "2.0",
     id,
     error: {
-      code: -32600,
-      message: "Invalid JSON-RPC request"
-    }
+      code: -32601,
+      message: `Method not found: ${method}`,
+    },
   };
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
+  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+    const authEnabled = isAuthEnabled(env.AUTH_ENABLED);
+    const allowAllMetering = isMeteringAllowAll(env.METERING_ALLOW_ALL);
+    const shouldEnforceMetering = !allowAllMetering;
+    let meteredCalls: MeteredToolCall[] = [];
+    let authenticatedAccountId: string | undefined;
 
-    // MCP JSON-RPC Endpoint
-    if (request.method === "POST" && (url.pathname === "/mcp" || url.pathname === "/")) {
-      try {
-        const body = await request.json();
-        const response = await handleMcpRequest(body, env);
-        return new Response(JSON.stringify(response), {
-          headers: { "Content-Type": "application/json" }
-        });
-      } catch (err: any) {
+    if (authEnabled || shouldEnforceMetering) {
+      if (request.method === "POST") {
+        try {
+          const cloned = await request.clone().json();
+          meteredCalls = extractMeteredToolCalls(cloned);
+        } catch {
+          // Non-JSON or malformed body will be handled by the MCP transport
+        }
+      }
+
+      const totalRequiredMicrocents = meteredCalls.reduce(
+        (sum, call) => sum + call.costMicrocents,
+        0
+      );
+
+      const authHeader = request.headers.get("Authorization");
+      const token = extractBearerToken(authHeader);
+
+      if (!token) {
         return new Response(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            error: { code: -32700, message: "Parse error: invalid JSON" }
-          }),
-          { status: 400, headers: { "Content-Type": "application/json" } }
+          JSON.stringify({ error: "Missing or invalid API key" }),
+          { status: 401, headers: { "Content-Type": "application/json" } }
         );
+      }
+
+      const authResult = await authenticateAndCheckBalance(
+        env.DB,
+        token,
+        Math.max(1, totalRequiredMicrocents),
+        shouldEnforceMetering
+      );
+
+      if (!authResult.ok) {
+        return new Response(
+          JSON.stringify({ error: authResult.error }),
+          { status: authResult.status, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      authenticatedAccountId = authResult.account.id;
+    }
+
+    const startTime = Date.now();
+    const mcp = new McpServer({
+      name: "Campervan Technical & Electrical MCP",
+      version: "1.0.0",
+    });
+
+    // Register modular tool groups
+    registerElectricalTools(mcp);
+    registerManualTools(
+      mcp,
+      env.VECTOR_INDEX,
+      env.AI,
+      env.DB,
+      env.CDN_BASE_URL,
+      env.DEEPINFRA_TOKEN,
+      env.EMBEDDING_PROVIDER
+    );
+
+    // Use stateless transport for Cloudflare Workers (no persistent sessions)
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
+
+    await mcp.connect(transport);
+    const response = await transport.handleRequest(request);
+
+    if (
+      shouldEnforceMetering &&
+      authenticatedAccountId &&
+      meteredCalls.length > 0 &&
+      response.status === 200
+    ) {
+      let successfulCalls = meteredCalls;
+      try {
+        const respBody = await response.clone().json();
+        const respItems = Array.isArray(respBody) ? respBody : [respBody];
+        successfulCalls = meteredCalls.filter((call) => {
+          const matchingResp =
+            respItems.find(
+              (r) => r && typeof r === "object" && (r as { id?: unknown }).id === call.id
+            ) ??
+            (respItems.length === 1 &&
+            meteredCalls.length === 1 &&
+            respItems[0] &&
+            typeof respItems[0] === "object" &&
+            (respItems[0] as { id?: unknown }).id === undefined
+              ? respItems[0]
+              : undefined);
+
+          if (!matchingResp || typeof matchingResp !== "object") return false;
+          const typedResp = matchingResp as {
+            error?: unknown;
+            result?: { isError?: boolean };
+          };
+          return !typedResp.error && typedResp.result?.isError !== true;
+        });
+      } catch {
+        // Non-JSON 200 stream: bill all metered calls
+      }
+
+      if (successfulCalls.length > 0) {
+        const elapsedMs = Date.now() - startTime;
+        const deducted = await recordBatchToolUsage(
+          env.DB,
+          authenticatedAccountId,
+          successfulCalls,
+          elapsedMs
+        );
+
+        if (!deducted) {
+          return new Response(
+            JSON.stringify({ error: "Insufficient account balance" }),
+            { status: 402, headers: { "Content-Type": "application/json" } }
+          );
+        }
       }
     }
 
-    if (request.method === "GET" && url.pathname === "/health") {
-      return new Response(
-        JSON.stringify({
-          status: "healthy",
-          server: "campervan-mcp",
-          tools: MCP_TOOLS.map((t) => t.name)
-        }),
-        { headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    return new Response("Campervan MCP Server Online", { status: 200 });
-  }
+    return response;
+  },
 };

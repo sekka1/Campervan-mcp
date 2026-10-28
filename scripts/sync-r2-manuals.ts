@@ -528,8 +528,11 @@ export async function runSync(options: SyncOptions): Promise<void> {
 // Entry Point
 // ---------------------------------------------------------------------------
 
-/* c8 ignore start */
-const isMainModule = typeof require !== "undefined" && require.main === module;
+const isMainModule =
+  (typeof require !== "undefined" && require.main === module) ||
+  (Boolean(process.argv[1]) &&
+    (process.argv[1].endsWith("sync-r2-manuals.ts") ||
+      process.argv[1].endsWith("sync-r2-manuals.js")));
 
 if (isMainModule) {
   const options = parseSyncArgs(process.argv.slice(2));

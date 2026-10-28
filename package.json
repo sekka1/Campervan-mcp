@@ -2,10 +2,10 @@
   "name": "campervan-mcp-server",
   "version": "1.0.0",
   "description": "Campervan Technical & Electrical MCP Server built on Cloudflare Workers",
-  "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "cf dev",
-    "build": "tsc --noEmit",
+    "dev": "vite --port=3000 --host=0.0.0.0",
+    "build": "vite build",
     "deploy": "cf deploy",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit scripts",

@@ -1378,8 +1378,11 @@ export async function runIngestion(options: IngestOptions): Promise<void> {
 // Entry Point
 // ---------------------------------------------------------------------------
 
-/* c8 ignore start */
-const isMainModule = typeof require !== "undefined" && require.main === module;
+const isMainModule =
+  (typeof require !== "undefined" && require.main === module) ||
+  (Boolean(process.argv[1]) &&
+    (process.argv[1].endsWith("ingest-manuals.ts") ||
+      process.argv[1].endsWith("ingest-manuals.js")));
 
 if (isMainModule) {
   const options = parseArgs(process.argv.slice(2));

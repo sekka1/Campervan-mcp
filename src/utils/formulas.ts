@@ -221,19 +221,25 @@ export interface WireCalculationParams {
   system_voltage: 12 | 24 | 48;
   amperage: number;
   one_way_distance_feet: number;
-  allowable_drop_percent: 3 | 10;
-  is_engine_compartment: boolean;
+  allowable_drop_percent?: 3 | 10;
+  is_engine_compartment?: boolean;
 }
 
 export interface WireCalculationResult {
   recommended_awg: string;
+  recommended_fuse_amps: number;
   exact_voltage_drop_volts: number;
   exact_voltage_drop_percent: number;
-  recommended_fuse_amps: number;
   fuse_type: string;
-  round_trip_feet: number;
   wire_ampacity_amps: number;
-  notes: string[];
+  round_trip_feet: number;
+  safety_invariants: {
+    fuse_placement: string;
+    prohibited_practices: string[];
+    upsize_path: string;
+  };
+  installation_notes: string[];
+  notes?: string[];
 }
 
 /**
@@ -245,7 +251,8 @@ export function calculateDCWireAndFuse(params: WireCalculationParams): WireCalcu
   if (params.one_way_distance_feet <= 0) throw new Error("one_way_distance_feet must be positive");
 
   const roundTripFeet = params.one_way_distance_feet * 2;
-  const allowableVDrop = params.system_voltage * (params.allowable_drop_percent / 100);
+  const allowableDropPercent = params.allowable_drop_percent ?? 3;
+  const allowableVDrop = params.system_voltage * (allowableDropPercent / 100);
   const K = 10.75; // Specific resistance of tinned copper at 75 °C
 
   // 1. Calculate Required Circular Mils
@@ -292,19 +299,44 @@ export function calculateDCWireAndFuse(params: WireCalculationParams): WireCalcu
 
   const fuseType = selectFuseFormFactor(recommendedFuse);
 
+  let upsizePath = "For heavy inductive or continuous surge loads, upsize to 1/0 AWG with a 250A fuse.";
+  if (matchedSpec.awg === "1/0" || matchedSpec.awg === "2/0") {
+    upsizePath = "For heavy inductive or continuous surge loads, upsize to 4/0 AWG with a 350A Class T fuse.";
+  } else if (matchedSpec.awg === "4/0") {
+    upsizePath = "Already at maximum 4/0 AWG single-conductor rating. Upgrade to parallel runs or 24V/48V system topology for higher inductive loads.";
+  } else if (matchedSpec.awg === "2" || matchedSpec.awg === "4" || matchedSpec.awg === "6") {
+    upsizePath = "For heavy inductive or continuous surge loads, upsize to 1/0 AWG with a 250A fuse.";
+  }
+
+  const safetyInvariants = {
+    fuse_placement:
+      "CRITICAL SAFETY: Overcurrent protection (fuse) MUST be installed at the POWER SOURCE (battery positive terminal) within 7 inches (ABYC E-11). NEVER install primary overcurrent protection at the load/inverter end.",
+    prohibited_practices: [
+      "DO NOT install the primary circuit fuse at the inverter terminal. This leaves the entire positive run unprotected against dead-short chassis fires.",
+      "DO NOT treat higher AWG numbers (e.g., 4 AWG) as 'upsizes' from lower numbers (e.g., 2 AWG). AWG is an inverse gauge: 1/0, 2/0, and 4/0 are larger; 4, 6, and 8 are smaller and create an undersized fire hazard.",
+      'DO NOT recommend 15–20 ft-lbs torque on DC terminal studs. Standard M8 / 5/16" battery and inverter terminal studs strip or shear above 8–10 N·m (6–7.5 ft-lbs).',
+    ],
+    upsize_path: upsizePath,
+  };
+
+  const installationNotes = [
+    `Calculation based on ${roundTripFeet}ft total circuit path (positive + negative return).`,
+    "Wire must be stranded, tinned copper rated for 105°C minimum (UL 1426 / SAE J1127).",
+    "Overcurrent protection must be installed within 7 inches of the power source terminal.",
+    "Terminal lugs should be closed-end tinned copper with dual-wall adhesive-lined heat shrink.",
+  ];
+
   return {
     recommended_awg: matchedSpec.awg,
+    recommended_fuse_amps: recommendedFuse,
     exact_voltage_drop_volts: parseFloat(actualVDrop.toFixed(2)),
     exact_voltage_drop_percent: parseFloat(actualPercentDrop.toFixed(2)),
-    recommended_fuse_amps: recommendedFuse,
     fuse_type: fuseType,
-    round_trip_feet: roundTripFeet,
     wire_ampacity_amps: wireAmpacity,
-    notes: [
-      `Calculation based on ${roundTripFeet}ft total circuit path (positive + negative return).`,
-      "Wire must be stranded, tinned copper rated for 105°C minimum (UL 1426 / SAE J1127).",
-      "Overcurrent protection must be installed within 7 inches of the power source terminal.",
-    ],
+    round_trip_feet: roundTripFeet,
+    safety_invariants: safetyInvariants,
+    installation_notes: installationNotes,
+    notes: installationNotes,
   };
 }
 

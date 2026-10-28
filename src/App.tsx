@@ -20,9 +20,9 @@ import {
   FileSearch,
   Lock,
 } from 'lucide-react';
-import { calculateDcWireAndFuse, WireCalculationResult } from './tools/calculations.ts';
-import { searchVanManuals, SearchVanManualsResponse } from './tools/manuals.ts';
-import { MCP_TOOLS } from './index.ts';
+import { calculateDcWireAndFuse, WireCalculationResult } from './tools/calculations';
+import { searchVanManuals, SearchVanManualsResponse } from './tools/manuals';
+import { MCP_TOOLS } from './index';
 
 interface AbycSpec {
   awg: string;
