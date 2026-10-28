@@ -1,0 +1,30 @@
+name = "campervan-mcp-server"
+main = "src/index.ts"
+compatibility_date = "2024-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Relational Database Binding (D1)
+[[d1_databases]]
+binding = "DB"
+database_name = "campervan_knowledge"
+database_id = "2aa73cfb-cf41-4ab3-b614-b0cf1eb7ec0c"
+migrations_dir = "migrations"
+
+# Vector Database Binding (Vectorize)
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "campervan-specs-bge-base"
+
+# Object Storage Binding (R2)
+[[r2_buckets]]
+binding = "ASSETS_BUCKET"
+bucket_name = "campervan-mcp"
+preview_bucket_name = "campervan-mcp-preview"
+
+# Workers AI for Edge Embeddings (768-dim BAAI/bge-base-en-v1.5)
+[ai]
+binding = "AI"
+
+[vars]
+CDN_BASE_URL = "https://assets.campervan-mcp.internal"
+ENVIRONMENT = "production"

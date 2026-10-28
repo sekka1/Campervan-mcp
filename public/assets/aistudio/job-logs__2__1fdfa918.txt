@@ -1,0 +1,253 @@
+﻿2026-10-27T17:28:50.4082801Z Current runner version: '2.338.0'
+2026-10-27T17:28:50.4099927Z ##[group]Runner Image Provisioner
+2026-10-27T17:28:50.4100608Z Hosted Compute Agent
+2026-10-27T17:28:50.4100969Z Version: 20261021.618
+2026-10-27T17:28:50.4101443Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+2026-10-27T17:28:50.4101898Z Build Date: 2026-10-21T00:45:21Z
+2026-10-27T17:28:50.4102335Z Worker ID: {383e873b-ffa9-44cd-a179-43541f716951}
+2026-10-27T17:28:50.4102800Z Region: westus3
+2026-10-27T17:28:50.4103140Z Cloud: Azure
+2026-10-27T17:28:50.4103561Z ##[endgroup]
+2026-10-27T17:28:50.4104322Z ##[group]Operating System
+2026-10-27T17:28:50.4104752Z Ubuntu
+2026-10-27T17:28:50.4105098Z 24.04.5
+2026-10-27T17:28:50.4105443Z LTS
+2026-10-27T17:28:50.4105819Z ##[endgroup]
+2026-10-27T17:28:50.4106158Z ##[group]Runner Image
+2026-10-27T17:28:50.4106586Z Image: ubuntu-24.04
+2026-10-27T17:28:50.4106939Z Version: 20261012.334.1
+2026-10-27T17:28:50.4107986Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261012.334/images/ubuntu/Ubuntu2404-Readme.md
+2026-10-27T17:28:50.4109082Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261012.334
+2026-10-27T17:28:50.4109698Z ##[endgroup]
+2026-10-27T17:28:50.4110384Z ##[group]GITHUB_TOKEN Permissions
+2026-10-27T17:28:50.4111804Z Contents: read
+2026-10-27T17:28:50.4112145Z Metadata: read
+2026-10-27T17:28:50.4112542Z ##[endgroup]
+2026-10-27T17:28:50.4113862Z Secret source: Actions
+2026-10-27T17:28:50.4114463Z Cache mode: write
+2026-10-27T17:28:50.4114903Z Prepare workflow directory
+2026-10-27T17:28:50.4424103Z Prepare all required actions
+2026-10-27T17:28:50.4454744Z Getting action download info
+2026-10-27T17:28:50.7623150Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-10-27T17:28:50.8810699Z Download action repository 'pnpm/action-setup@v4' (SHA:b906affcce14559ad1aafd4ab0e942779e9f58b1)
+2026-10-27T17:28:52.0187117Z Download action repository 'actions/setup-node@v4' (SHA:49933ea5288caeca8642d1e84afbd3f7d6820020)
+2026-10-27T17:28:52.6753086Z Complete job name: sync-r2
+2026-10-27T17:28:52.7725890Z ##[group]Run actions/checkout@v4
+2026-10-27T17:28:52.7726502Z with:
+2026-10-27T17:28:52.7726959Z   repository: sekka1/Campervan-mcp
+2026-10-27T17:28:52.7729086Z   token: ***
+2026-10-27T17:28:52.7729531Z   ssh-strict: true
+2026-10-27T17:28:52.7729977Z   ssh-user: git
+2026-10-27T17:28:52.7730432Z   persist-credentials: true
+2026-10-27T17:28:52.7730903Z   clean: true
+2026-10-27T17:28:52.7731360Z   sparse-checkout-cone-mode: true
+2026-10-27T17:28:52.7731843Z   fetch-depth: 1
+2026-10-27T17:28:52.7732285Z   fetch-tags: false
+2026-10-27T17:28:52.7732731Z   show-progress: true
+2026-10-27T17:28:52.7733189Z   lfs: false
+2026-10-27T17:28:52.7733625Z   submodules: false
+2026-10-27T17:28:52.7734075Z   set-safe-directory: true
+2026-10-27T17:28:52.7734565Z   allow-unsafe-pr-checkout: false
+2026-10-27T17:28:52.7735144Z ##[endgroup]
+2026-10-27T17:28:52.8362355Z Syncing repository: sekka1/Campervan-mcp
+2026-10-27T17:28:52.8363647Z ##[group]Getting Git version info
+2026-10-27T17:28:52.8364340Z Working directory is '/home/runner/work/Campervan-mcp/Campervan-mcp'
+2026-10-27T17:28:52.8365221Z [command]/usr/bin/git version
+2026-10-27T17:28:52.8405342Z git version 2.55.0
+2026-10-27T17:28:52.8417066Z ##[endgroup]
+2026-10-27T17:28:52.8425502Z Temporarily overriding HOME='/home/runner/work/_temp/3631ccde-d951-4c08-9e59-ded7ca21bb90' before making global git config changes
+2026-10-27T17:28:52.8426850Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-27T17:28:52.8428790Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/Campervan-mcp/Campervan-mcp
+2026-10-27T17:28:52.8464443Z Deleting the contents of '/home/runner/work/Campervan-mcp/Campervan-mcp'
+2026-10-27T17:28:52.8467884Z ##[group]Initializing the repository
+2026-10-27T17:28:52.8470645Z [command]/usr/bin/git init /home/runner/work/Campervan-mcp/Campervan-mcp
+2026-10-27T17:28:52.8562096Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-27T17:28:52.8563438Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-27T17:28:52.8564444Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-27T17:28:52.8565278Z hint: call:
+2026-10-27T17:28:52.8566042Z hint:
+2026-10-27T17:28:52.8566763Z hint: 	git config --global init.defaultBranch <name>
+2026-10-27T17:28:52.8567324Z hint:
+2026-10-27T17:28:52.8567845Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-27T17:28:52.8568520Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-27T17:28:52.8569233Z hint:
+2026-10-27T17:28:52.8569663Z hint: 	git branch -m <name>
+2026-10-27T17:28:52.8570121Z hint:
+2026-10-27T17:28:52.8570662Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-27T17:28:52.8574518Z Initialized empty Git repository in /home/runner/work/Campervan-mcp/Campervan-mcp/.git/
+2026-10-27T17:28:52.8579970Z [command]/usr/bin/git remote add origin https://github.com/sekka1/Campervan-mcp
+2026-10-27T17:28:52.8666252Z ##[endgroup]
+2026-10-27T17:28:52.8667005Z ##[group]Disabling automatic garbage collection
+2026-10-27T17:28:52.8669184Z [command]/usr/bin/git config --local gc.auto 0
+2026-10-27T17:28:52.8753599Z ##[endgroup]
+2026-10-27T17:28:52.8754428Z ##[group]Setting up auth
+2026-10-27T17:28:52.8757898Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-27T17:28:52.8779617Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-27T17:28:52.9028368Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-27T17:28:52.9049125Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-27T17:28:52.9208297Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-27T17:28:52.9230131Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-27T17:28:52.9387831Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-27T17:28:52.9543448Z ##[endgroup]
+2026-10-27T17:28:52.9548369Z ##[group]Fetching the repository
+2026-10-27T17:28:52.9549809Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +11dafad50423332fdfacf54dc594c3ce835de5a5:refs/remotes/origin/main
+2026-10-27T17:28:53.6236110Z From https://github.com/sekka1/Campervan-mcp
+2026-10-27T17:28:53.6236676Z  * [new ref]         11dafad50423332fdfacf54dc594c3ce835de5a5 -> origin/main
+2026-10-27T17:28:53.6240022Z ##[endgroup]
+2026-10-27T17:28:53.6240350Z ##[group]Determining the checkout info
+2026-10-27T17:28:53.6241598Z ##[endgroup]
+2026-10-27T17:28:53.6245825Z [command]/usr/bin/git sparse-checkout disable
+2026-10-27T17:28:53.6282148Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-27T17:28:53.6305634Z ##[group]Checking out the ref
+2026-10-27T17:28:53.6305930Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-10-27T17:28:53.6398821Z Switched to a new branch 'main'
+2026-10-27T17:28:53.6402895Z branch 'main' set up to track 'origin/main'.
+2026-10-27T17:28:53.6407118Z ##[endgroup]
+2026-10-27T17:28:53.6439858Z [command]/usr/bin/git log -1 --format=%H
+2026-10-27T17:28:53.6457888Z 11dafad50423332fdfacf54dc594c3ce835de5a5
+2026-10-27T17:28:53.6684832Z ##[group]Run pnpm/action-setup@v4
+2026-10-27T17:28:53.6685199Z with:
+2026-10-27T17:28:53.6685421Z   version: 9
+2026-10-27T17:28:53.6685610Z   dest: ~/setup-pnpm
+2026-10-27T17:28:53.6685806Z   run_install: null
+2026-10-27T17:28:53.6685991Z   cache: false
+2026-10-27T17:28:53.6686420Z   cache_dependency_path: pnpm-lock.yaml
+2026-10-27T17:28:53.6686712Z   package_json_file: package.json
+2026-10-27T17:28:53.6686905Z   standalone: false
+2026-10-27T17:28:53.6687036Z ##[endgroup]
+2026-10-27T17:28:53.7623059Z ##[group]Running self-installer...
+2026-10-27T17:28:53.9830914Z (node:2055) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-10-27T17:28:53.9831907Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T17:28:54.1674477Z Progress: resolved 1, reused 0, downloaded 0, added 0
+2026-10-27T17:28:54.1736776Z Packages: +1
+2026-10-27T17:28:54.1737344Z +
+2026-10-27T17:28:54.4542660Z Progress: resolved 1, reused 0, downloaded 1, added 1, done
+2026-10-27T17:28:54.5171184Z 
+2026-10-27T17:28:54.5171693Z dependencies:
+2026-10-27T17:28:54.5191832Z + pnpm 9.15.9 (12.15.0 is available)
+2026-10-27T17:28:54.5192116Z 
+2026-10-27T17:28:54.5192197Z Done in 655ms
+2026-10-27T17:28:54.5356636Z ##[endgroup]
+2026-10-27T17:28:54.5357020Z Installation Completed!
+2026-10-27T17:28:54.5488804Z ##[group]Run actions/setup-node@v4
+2026-10-27T17:28:54.5489028Z with:
+2026-10-27T17:28:54.5489145Z   node-version: 24
+2026-10-27T17:28:54.5489262Z   cache: pnpm
+2026-10-27T17:28:54.5489381Z   always-auth: false
+2026-10-27T17:28:54.5489506Z   check-latest: false
+2026-10-27T17:28:54.5490829Z   token: ***
+2026-10-27T17:28:54.5491000Z env:
+2026-10-27T17:28:54.5491153Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+2026-10-27T17:28:54.5491331Z ##[endgroup]
+2026-10-27T17:28:54.6341986Z Found in cache @ /opt/hostedtoolcache/node/24.21.0/x64
+2026-10-27T17:28:54.6344811Z (node:2069) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T17:28:54.6345399Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T17:28:54.6346869Z ##[group]Environment details
+2026-10-27T17:28:57.0511692Z node: v24.21.0
+2026-10-27T17:28:57.0511986Z npm: 11.19.0
+2026-10-27T17:28:57.0512220Z yarn: 1.22.22
+2026-10-27T17:28:57.0513032Z ##[endgroup]
+2026-10-27T17:28:57.0541960Z [command]/home/runner/setup-pnpm/node_modules/.bin/pnpm store path --silent
+2026-10-27T17:28:57.4432949Z /home/runner/setup-pnpm/node_modules/.bin/store/v3
+2026-10-27T17:28:57.6661543Z Cache hit for: node-cache-Linux-x64-pnpm-b44d556ccc6aa68e7e94d9ffd9caf1e47816292d1fd2cf922a197cabe93d763a
+2026-10-27T17:28:57.6703429Z (node:2069) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-10-27T17:28:58.8719817Z Received 50331648 of 158146527 (31.8%), 48.0 MBs/sec
+2026-10-27T17:28:59.7017219Z Received 158146527 of 158146527 (100.0%), 82.4 MBs/sec
+2026-10-27T17:28:59.7017708Z Cache Size: ~151 MB (158146527 B)
+2026-10-27T17:28:59.7063694Z [command]/usr/bin/tar -xf /home/runner/work/_temp/f158230b-b5fb-4c03-8cf4-2b95c5d7eb64/cache.tzst -P -C /home/runner/work/Campervan-mcp/Campervan-mcp --use-compress-program unzstd
+2026-10-27T17:29:00.4880269Z Cache restored successfully
+2026-10-27T17:29:00.4949665Z Cache restored from key: node-cache-Linux-x64-pnpm-b44d556ccc6aa68e7e94d9ffd9caf1e47816292d1fd2cf922a197cabe93d763a
+2026-10-27T17:29:00.5269199Z ##[group]Run pnpm install
+2026-10-27T17:29:00.5269427Z [36;1mpnpm install[0m
+2026-10-27T17:29:00.5680708Z shell: /usr/bin/bash -e {0}
+2026-10-27T17:29:00.5680878Z env:
+2026-10-27T17:29:00.5681041Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+2026-10-27T17:29:00.5681233Z ##[endgroup]
+2026-10-27T17:29:00.8304921Z Lockfile is up to date, resolution step is skipped
+2026-10-27T17:29:00.8715201Z Progress: resolved 1, reused 0, downloaded 0, added 0
+2026-10-27T17:29:00.8974743Z Packages: +398
+2026-10-27T17:29:00.8978472Z ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+2026-10-27T17:29:01.4940945Z Progress: resolved 398, reused 398, downloaded 0, added 398, done
+2026-10-27T17:29:01.5679143Z .../esbuild@0.21.5/node_modules/esbuild postinstall$ node install.js
+2026-10-27T17:29:01.5682348Z .../sharp@0.33.5/node_modules/sharp install$ node install/check
+2026-10-27T17:29:01.5684399Z .../node_modules/workerd postinstall$ node install.js
+2026-10-27T17:29:01.5686831Z .../node_modules/workerd postinstall$ node install.js
+2026-10-27T17:29:01.5690012Z .../esbuild@0.17.19/node_modules/esbuild postinstall$ node install.js
+2026-10-27T17:29:01.6602048Z .../esbuild@0.21.5/node_modules/esbuild postinstall: Done
+2026-10-27T17:29:01.6934326Z .../esbuild@0.28.1/node_modules/esbuild postinstall$ node install.js
+2026-10-27T17:29:01.8435860Z .../sharp@0.33.5/node_modules/sharp install: Done
+2026-10-27T17:29:01.8545612Z .../esbuild@0.28.2/node_modules/esbuild postinstall$ node install.js
+2026-10-27T17:29:02.3145872Z .../node_modules/workerd postinstall: Done
+2026-10-27T17:29:02.8974451Z .../esbuild@0.17.19/node_modules/esbuild postinstall: Done
+2026-10-27T17:29:02.9013521Z .../node_modules/workerd postinstall: Done
+2026-10-27T17:29:03.0182756Z .../esbuild@0.28.1/node_modules/esbuild postinstall: Done
+2026-10-27T17:29:03.1392343Z .../esbuild@0.28.2/node_modules/esbuild postinstall: Done
+2026-10-27T17:29:03.3159846Z 
+2026-10-27T17:29:03.3160406Z dependencies:
+2026-10-27T17:29:03.3160753Z + @aws-sdk/client-s3 3.1098.0
+2026-10-27T17:29:03.3161068Z + @modelcontextprotocol/sdk 1.30.0
+2026-10-27T17:29:03.3161331Z + zod 3.25.76
+2026-10-27T17:29:03.3161448Z 
+2026-10-27T17:29:03.3161539Z devDependencies:
+2026-10-27T17:29:03.3161813Z + @cloudflare/vitest-pool-workers 0.6.16
+2026-10-27T17:29:03.3162159Z + @cloudflare/workers-types 5.20260729.1
+2026-10-27T17:29:03.3162509Z + @napi-rs/canvas 1.0.13
+2026-10-27T17:29:03.3162753Z + @types/node 20.19.43
+2026-10-27T17:29:03.3163038Z + @typescript-eslint/eslint-plugin 8.65.0
+2026-10-27T17:29:03.3163357Z + @typescript-eslint/parser 8.65.0
+2026-10-27T17:29:03.3163657Z + @vitest/coverage-v8 2.1.9
+2026-10-27T17:29:03.3163896Z + cf 1.0.0-beta.18
+2026-10-27T17:29:03.3164101Z + eslint 9.39.5
+2026-10-27T17:29:03.3164353Z + tsx 4.23.1
+2026-10-27T17:29:03.3164558Z + typescript 5.9.3
+2026-10-27T17:29:03.3164762Z + unpdf 1.8.0
+2026-10-27T17:29:03.3164954Z + vitest 2.1.9
+2026-10-27T17:29:03.3165152Z + wrangler 4.151.1
+2026-10-27T17:29:03.3165275Z 
+2026-10-27T17:29:03.3265418Z Done in 2.7s using pnpm v9.15.9
+2026-10-27T17:29:03.3481255Z ##[group]Run npx tsx scripts/sync-r2-manuals.ts
+2026-10-27T17:29:03.3481507Z [36;1mnpx tsx scripts/sync-r2-manuals.ts[0m
+2026-10-27T17:29:03.3531860Z shell: /usr/bin/bash -e {0}
+2026-10-27T17:29:03.3532012Z env:
+2026-10-27T17:29:03.3532169Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+2026-10-27T17:29:03.3532364Z   EMBEDDING_PROVIDER: deepinfra
+2026-10-27T17:29:03.3532651Z   CLOUDFLARE_ACCOUNT_ID: ***
+2026-10-27T17:29:03.3532892Z   CLOUDFLARE_API_TOKEN: ***
+2026-10-27T17:29:03.3533082Z   DEEPINFRA_TOKEN: ***
+2026-10-27T17:29:03.3533260Z   R2_ACCESS_KEY_ID: ***
+2026-10-27T17:29:03.3533488Z   R2_SECRET_ACCESS_KEY: ***
+2026-10-27T17:29:03.3533655Z   D1_DATABASE_ID: 2aa73cfb-cf41-4ab3-b614-b0cf1eb7ec0c
+2026-10-27T17:29:03.3533858Z   FORCE_REINDEX: false
+2026-10-27T17:29:03.3533990Z ##[endgroup]
+2026-10-27T17:29:04.8197095Z Listing objects in R2 bucket "campervan-mcp"...
+2026-10-27T17:29:05.4889042Z Found 6 PDF object(s) in R2.
+2026-10-27T17:29:05.8589144Z Delta: 1 added/modified, 0 deleted
+2026-10-27T17:29:05.8589624Z Processing [1/1]: "2024-ford-transit-us.pdf"...
+2026-10-27T17:29:54.8856584Z Parsed "2024-ford-transit-us.pdf" into 276 chunks
+2026-10-27T17:29:55.2479703Z DeepInfra API error [HTTP 400]: {"detail":"You passed 513 input tokens and requested 0 output tokens. However, the model's context length is only 512 tokens, resulting in a maximum input length of 512 tokens. Please reduce the length of the input prompt. (parameter=input_tokens, value=513)"}
+2026-10-27T17:29:55.2502886Z Error processing "2024-ford-transit-us.pdf": Error: DeepInfra embedding request failed with HTTP 400: {"detail":"You passed 513 input tokens and requested 0 output tokens. However, the model's context length is only 512 tokens, resulting in a maximum input length of 512 tokens. Please reduce the length of the input prompt. (parameter=input_tokens, value=513)"}
+2026-10-27T17:29:55.2505150Z     at generateEmbeddings (/home/runner/work/Campervan-mcp/Campervan-mcp/scripts/ingest-manuals.ts:627:13)
+2026-10-27T17:29:55.2506097Z     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+2026-10-27T17:29:55.2507161Z     at async processAddedModifiedR2Object (/home/runner/work/Campervan-mcp/Campervan-mcp/scripts/sync-r2-manuals.ts:373:24)
+2026-10-27T17:29:55.2508190Z     at async runSync (/home/runner/work/Campervan-mcp/Campervan-mcp/scripts/sync-r2-manuals.ts:491:22)
+2026-10-27T17:29:55.5362299Z ✓ Manifest updated.
+2026-10-27T17:29:55.5362865Z Fatal error: Ingestion completed with 1 failure(s): 2024-ford-transit-us.pdf
+2026-10-27T17:29:55.6592195Z ##[error]Process completed with exit code 1.
+2026-10-27T17:29:55.6706077Z Post job cleanup.
+2026-10-27T17:29:55.7634236Z Pruning is unnecessary.
+2026-10-27T17:29:55.7745975Z Post job cleanup.
+2026-10-27T17:29:55.8287479Z [command]/usr/bin/git version
+2026-10-27T17:29:55.8316351Z git version 2.55.0
+2026-10-27T17:29:55.8337681Z Temporarily overriding HOME='/home/runner/work/_temp/feeb6f79-5894-4da3-b92a-947cc7ac778c' before making global git config changes
+2026-10-27T17:29:55.8341160Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-27T17:29:55.8341770Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/Campervan-mcp/Campervan-mcp
+2026-10-27T17:29:55.8371772Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-27T17:29:55.8398217Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-27T17:29:55.8575913Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-27T17:29:55.8597051Z http.https://github.com/.extraheader
+2026-10-27T17:29:55.8606506Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-10-27T17:29:55.8652354Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-27T17:29:55.8829584Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-27T17:29:55.8856563Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-27T17:29:55.9151456Z Cleaning up orphan processes
+2026-10-27T17:29:55.9405283Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, pnpm/action-setup@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

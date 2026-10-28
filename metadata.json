@@ -1,0 +1,6 @@
+{
+  "name": "Campervan MCP Workspace",
+  "description": "Development and testing workspace for the Campervan-mcp repository.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

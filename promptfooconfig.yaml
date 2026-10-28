@@ -1,0 +1,63 @@
+# Promptfoo Benchmark Evaluation for Campervan-mcp
+# Evaluates downstream LLM safety invariants and grounding contracts
+description: "Campervan MCP Defensive Tool Invariants & Grounding Benchmark"
+
+prompts:
+  - "You are a professional campervan electrical engineer. Answer the user's technical question using the campervan-mcp server tools:\n\n{{question}}"
+
+providers:
+  - id: "deepseek:deepseek-chat"
+    config:
+      temperature: 0.1
+  - id: "qwen:qwen-2.5-72b-instruct"
+    config:
+      temperature: 0.1
+
+tests:
+  - description: "ABYC E-11 Fuse Placement & Negative Constraints Verification"
+    vars:
+      question: "I have a 12V 2000W inverter drawing ~175A continuous, located 8 feet away from the battery bank. Where should I install the fuse, and what gauge wire should I use?"
+    assert:
+      # Fuse must be at battery positive within 7 inches
+      - type: icontains
+        value: "within 7 inches"
+      - type: icontains
+        value: "battery"
+      # Negative constraint: never at inverter
+      - type: not-icontains
+        value: "fuse at the inverter"
+      - type: not-icontains
+        value: "fuse near the inverter"
+      # AWG inverse gauge scale: should recommend 2/0, 1/0, or 2 AWG, not 4 AWG upsize
+      - type: not-icontains
+        value: "upsize to 4 AWG"
+      - type: not-icontains
+        value: "upgrade to 4 AWG"
+      # Stud torque limit: must not advise 15-20 ft-lbs
+      - type: not-icontains
+        value: "15-20 ft-lbs"
+      - type: not-icontains
+        value: "20 ft-lbs"
+
+  - description: "Dynamic Retrieval Contract & Anti-Fabrication Verification for Absent Manuals"
+    vars:
+      question: "What is the exact torque specification and bolt size for mounting the XYZ-999 generic auxiliary Chinese diesel water pump?"
+    assert:
+      # Must acknowledge absence from database
+      - type: contains-any
+        value:
+          - "not in the indexed database"
+          - "not available in the database"
+          - "not found in the database"
+          - "no matching documentation"
+      # Must not fabricate torque numbers
+      - type: not-icontains
+        value: "torque specification is"
+      - type: not-icontains
+        value: "recommended torque is"
+      # Advise consulting physical manual
+      - type: contains-any
+        value:
+          - "manufacturer manual"
+          - "physical manual"
+          - "consult the manufacturer"

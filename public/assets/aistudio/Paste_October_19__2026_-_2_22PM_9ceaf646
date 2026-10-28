@@ -1,0 +1,618 @@
+Camper Van Domain Intelligence MCP Engine: Technical Implementation Specification
+This document is an end-to-end technical specification and architecture blueprint for implementing an agent-centric, domain-specialized Model Context Protocol (MCP) server on Cloudflare's serverless edge infrastructure. It includes complete database schemas, ingestion pipelines, deterministic engineering algorithms, and TypeScript MCP handlers ready for automated code generation.
+1. System Architecture & Component Decoupling
+The platform decouples unstructured asset storage, structured document text, and vector indices into three purpose-built tiers:
+[Raw Engineering Assets: PDFs, OEM Manuals, Forum Dumps]
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 1. INGESTION & NORMALIZATION PIPELINE (Python / CLI)        │
+│    • PDF layout analysis & text extraction                  │
+│    • Vector/raster schematic image cropping                 │
+│    • Recursive semantic chunking with metadata tagging      │
+│    • Vector embedding generation                            │
+└──────────────┬──────────────────┬──────────────────┬────────┘
+               │                  │                  │
+               ▼                  ▼                  ▼
+┌──────────────────────┐ ┌──────────────────┐ ┌───────────────┐
+│ Cloudflare R2        │ │ Cloudflare D1    │ │ Cloudflare    │
+│ (Object Storage)     │ │ (Serverless SQL) │ │ Vectorize     │
+├──────────────────────┤ ├──────────────────┤ ├───────────────┤
+│ • Original raw PDFs  │ │ • Text chunks    │ │ • 768-dim     │
+│ • Cropped schematics │ │ • Chassis tags   │ │   embeddings  │
+│ • Zero-egress CDN    │ │ • Page mappings  │ │ • Cosine      │
+│   asset hosting      │ │ • Full metadata  │ │   similarity  │
+└──────────────────────┘ └────────┬─────────┘ └───────┬───────┘
+                                  │                   │
+                                  ▼                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 2. MCP RUNTIME SERVER (Cloudflare Workers / TypeScript)      │
+│    • JSON-RPC 2.0 over Streamable HTTP / Server-Sent Events │
+│    • Hybrid Search Engine (Vectorize kNN + D1 SQL filters)  │
+│    • Deterministic Engineering Math (ABYC E-11 calculators) │
+│    • Usage Metering & Pre-funded API Key Ledger             │
+└─────────────────────────────────────────────────────────────┘
+                               ▲
+                               │ Tool Calls / Context
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 3. CLIENT AGENTS & MODELS (Claude, Cursor, GPT-4o, Custom)  │
+└─────────────────────────────────────────────────────────────┘
+
+The Three Storage Tiers
+| Tier | Engine | Data Stored | Access Pattern | Cost / Sizing Model |
+|---|---|---|---|---|
+| Object Store | Cloudflare R2 | Raw PDFs (100MB+), high-res schematics, cropped CAD diagrams (PNG/WebP). | Direct HTTP/S via custom CDN domain. | $0.015/GB-month. $0.00 egress. |
+| Relational Store | Cloudflare D1 (SQLite) | Clean Markdown text chunks, document provenance, breadcrumbs, tags, image URLs. | Primary key index lookup (WHERE id IN (...)) and structured boolean queries. | Included with Workers; minimal read/write query units. |
+| Vector Index | Cloudflare Vectorize | 768-dimensional float32 vectors mapped strictly to Chunk IDs. | k-Nearest Neighbor (kNN) cosine similarity search. | 50M queried dims/mo & 10M stored dims included in $5/mo Workers Paid plan. |
+2. Project Directory Layout
+campervan-mcp/
+├── README.md
+├── wrangler.toml                  # Cloudflare deployment config & resource bindings
+├── package.json                   # Worker dependencies (@modelcontextprotocol/sdk)
+├── tsconfig.json
+├── migrations/
+│   └── 0001_init_schema.sql       # D1 relational database schema
+├── pipeline/                      # Ingestion pipeline (Python)
+│   ├── requirements.txt
+│   ├── ingest.py                  # CLI pipeline runner
+│   ├── extractors/
+│   │   ├── pdf_extractor.py       # Layout-aware text & image extraction
+│   │   └── chunker.py             # Semantic markdown chunker
+│   └── embedder.py                # Batch embedding utility
+├── src/                           # Worker MCP application (TypeScript)
+│   ├── index.ts                   # Fetch & SSE entrypoint
+│   ├── mcp/
+│   │   ├── server.ts              # MCP protocol instance & tool routing
+│   │   ├── types.ts               # Request/response interfaces
+│   │   └── tools/
+│   │       ├── search_specs.ts    # Hybrid RAG search (Vectorize + D1)
+│   │       ├── wire_calc.ts       # ABYC E-11 DC wire gauge & fuse calculator
+│   │       └── chassis_rules.ts   # Deterministic mounting & OEM cut rules
+│   └── services/
+│       ├── vectorize.ts           # Vectorize client wrapper
+│       ├── database.ts            # D1 query hydration
+│       └── metering.ts            # Fractional billing / API credit ledger
+
+3. Infrastructure & Database Definitions
+Cloudflare Deployment Configuration (wrangler.toml)
+name = "campervan-mcp-server"
+main = "src/index.ts"
+compatibility_date = "2024-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Relational Database Binding (D1)
+[[d1_databases]]
+binding = "DB"
+database_name = "campervan_knowledge"
+database_id = "YOUR_D1_DATABASE_UUID"
+migrations_dir = "migrations"
+
+# Vector Database Binding (Vectorize)
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "campervan-specs-bge-base"
+
+# Object Storage Binding (R2)
+[[r2_buckets]]
+binding = "ASSETS_BUCKET"
+bucket_name = "campervan-assets"
+preview_bucket_name = "campervan-assets-preview"
+
+# Workers AI for Edge Embeddings (Zero external API latency)
+[ai]
+binding = "AI"
+
+[vars]
+CDN_BASE_URL = "https://assets.yourdomain.com"
+ENVIRONMENT = "production"
+
+Relational Schema (migrations/0001_init_schema.sql)
+-- Documents Catalog
+CREATE TABLE IF NOT EXISTS documents (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL CHECK(category IN ('oem_bemm', 'component_manual', 'forum_consensus', 'code_standard')),
+    manufacturer TEXT NOT NULL,       -- e.g., 'Ford', 'Mercedes', 'Victron', 'EcoFlow'
+    applicable_chassis TEXT NOT NULL, -- e.g., 'transit', 'sprinter', 'promaster', 'universal'
+    applicable_model_years TEXT,      -- e.g., '2020-2024'
+    source_url TEXT,
+    raw_r2_path TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Granular Text Chunks for RAG Hydration
+CREATE TABLE IF NOT EXISTS document_chunks (
+    id TEXT PRIMARY KEY,              -- Format: "{doc_id}_{page_number}_{chunk_index}"
+    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    page_number INTEGER NOT NULL,
+    section_title TEXT,
+    subsystem TEXT NOT NULL CHECK(subsystem IN ('12v_dc', '48v_dc', '120v_ac', 'plumbing', 'heating_cooling', 'structural', 'chassis_interface')),
+    chunk_text TEXT NOT NULL,
+    word_count INTEGER NOT NULL,
+    token_count INTEGER NOT NULL,
+    schematic_image_id TEXT REFERENCES schematic_images(id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_doc ON document_chunks(document_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_subsystem ON document_chunks(subsystem);
+
+-- Extracted Schematic Diagrams & Images
+CREATE TABLE IF NOT EXISTS schematic_images (
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    page_number INTEGER NOT NULL,
+    caption TEXT NOT NULL,
+    r2_key TEXT NOT NULL,
+    mime_type TEXT NOT NULL DEFAULT 'image/png',
+    width INTEGER,
+    height INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Metering & API Key Ledger for Agent Fractional Billing
+CREATE TABLE IF NOT EXISTS accounts (
+    id TEXT PRIMARY KEY,
+    api_key_hash TEXT UNIQUE NOT NULL,
+    balance_microcents INTEGER NOT NULL DEFAULT 10000000, -- 10,000,000 = $10.000000 USD
+    is_active BOOLEAN NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS usage_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id TEXT NOT NULL REFERENCES accounts(id),
+    tool_name TEXT NOT NULL,
+    cost_microcents INTEGER NOT NULL,
+    execution_time_ms INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_account ON usage_records(account_id);
+
+4. Ingestion & Normalization Pipeline (Python)
+The ingestion pipeline executes locally or in a CI/CD runner to process documents before writing to R2, D1, and Vectorize.
+Ingestion Script (pipeline/ingest.py)
+#!/usr/bin/env python3
+"""
+Camper Van Knowledge Ingestion Pipeline.
+Extracts text, structures tables, identifies circuit schematics, 
+chunks with semantic boundaries, and uploads to R2, D1, and Vectorize.
+"""
+
+import os
+import io
+import re
+import json
+import sqlite3
+import argparse
+from typing import List, Dict, Any
+import fitz  # PyMuPDF
+import boto3
+from openai import OpenAI
+
+# Cloudflare R2 Client (S3 Compatible API)
+r2_client = boto3.client(
+    "s3",
+    endpoint_url=os.environ.get("CF_R2_ENDPOINT"),
+    aws_access_key_id=os.environ.get("CF_R2_ACCESS_KEY_ID"),
+    aws_secret_access_key=os.environ.get("CF_R2_SECRET_ACCESS_KEY"),
+    region_name="auto",
+)
+
+R2_BUCKET = os.environ.get("CF_R2_BUCKET_NAME", "campervan-assets")
+openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+
+def extract_and_chunk_pdf(
+    pdf_path: str, doc_metadata: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    """
+    Parses PDF, isolates high-resolution images/schematics, and segments
+    clean markdown text chunks with 500-token target size and 100-token overlap.
+    """
+    doc = fitz.open(pdf_path)
+    chunks = []
+    
+    print(f"[*] Processing: {doc_metadata['title']} ({len(doc)} pages)")
+    
+    for page_idx in range(len(doc)):
+        page = doc[page_idx]
+        page_num = page_idx + 1
+        text = page.get_text("text")
+        
+        # 1. Extract embedded schematics / diagrams
+        image_list = page.get_images(full=True)
+        schematic_id = None
+        
+        if image_list:
+            for img_idx, img in enumerate(image_list):
+                xref = img[0]
+                base_image = doc.extract_image(xref)
+                image_bytes = base_image["image"]
+                image_ext = base_image["ext"]
+                
+                # Filter out tiny logos/icons (under 10KB or < 300px dimensions)
+                if len(image_bytes) > 15000 and base_image.get("width", 0) > 300:
+                    schematic_id = f"{doc_metadata['id']}_p{page_num}_img{img_idx}"
+                    r2_key = f"schematics/{doc_metadata['id']}/{schematic_id}.{image_ext}"
+                    
+                    r2_client.put_object(
+                        Bucket=R2_BUCKET,
+                        Key=r2_key,
+                        Body=image_bytes,
+                        ContentType=f"image/{image_ext}"
+                    )
+                    break # Link primary diagram on this page
+
+        # 2. Skip pages with virtually no text (pure covers/blanks)
+        cleaned_text = re.sub(r'\s+', ' ', text).strip()
+        if len(cleaned_text) < 80:
+            continue
+
+        # 3. Text segmentation (500 words with 100-word overlap)
+        words = cleaned_text.split()
+        chunk_size = 500
+        overlap = 100
+        step = chunk_size - overlap
+        
+        for i in range(0, max(1, len(words)), step):
+            chunk_slice = words[i:i + chunk_size]
+            if not chunk_slice:
+                continue
+            chunk_text = " ".join(chunk_slice)
+            
+            chunk_id = f"{doc_metadata['id']}_p{page_num}_c{i // step}"
+            chunks.append({
+                "id": chunk_id,
+                "document_id": doc_metadata["id"],
+                "page_number": page_num,
+                "subsystem": doc_metadata["subsystem"],
+                "chunk_text": chunk_text,
+                "word_count": len(chunk_slice),
+                "token_count": int(len(chunk_slice) * 1.3),
+                "schematic_image_id": schematic_id,
+            })
+            
+    return chunks
+
+def generate_embeddings_batch(chunks: List[Dict[str, Any]]) -> List[List[float]]:
+    """Batch computes 768-dim embeddings using OpenAI text-embedding-3-small (dimensions=768)"""
+    texts = [c["chunk_text"] for c in chunks]
+    batch_size = 100
+    all_embeddings = []
+    
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i + batch_size]
+        response = openai_client.embeddings.create(
+            model="text-embedding-3-small",
+            input=batch,
+            dimensions=768
+        )
+        all_embeddings.extend([item.embedding for item in response.data])
+        
+    return all_embeddings
+
+5. Deterministic Engineering Core (ABYC Standards)
+LLMs must not compute electrical cable gauges or fuse sizing from memory. The server executes these computations deterministically via the following engine adhering to ABYC E-11 (AC and DC Electrical Systems on Boats / RVs):
+Where:
+ * K = 10.75 (specific resistance of tinned copper at 75°C).
+ * I = \text{Current (Amperes continuous)}.
+ * L = \text{Total Circuit Length in Feet (\textbf{Round Trip: Positive Run + Negative Return})}.
+ * V_{\text{drop}} = \text{System Voltage} \times \text{Acceptable Drop Fraction (0.03 for critical 3\%, 0.10 for non-critical 10\%)}.
+Wire Calculation Module (src/mcp/tools/wire_calc.ts)
+export interface WireCalculationParams {
+  system_voltage: 12 | 24 | 48;
+  amperage: number;
+  one_way_distance_feet: number;
+  allowable_drop_percent: 3 | 10;
+  is_engine_compartment: boolean;
+}
+
+export interface WireCalculationResult {
+  recommended_awg: string;
+  exact_voltage_drop_volts: number;
+  exact_voltage_drop_percent: number;
+  recommended_fuse_amps: number;
+  fuse_type: string;
+  notes: string[];
+}
+
+interface AWGSpec {
+  awg: string;
+  circular_mils: number;
+  resistance_per_1000ft_ohms: number;
+  ampacity_outside_engine_105c: number;
+  ampacity_inside_engine_105c: number;
+}
+
+const AWG_TABLE: AWGSpec[] = [
+  { awg: "16", circular_mils: 2580, resistance_per_1000ft_ohms: 4.016, ampacity_outside_engine_105c: 25, ampacity_inside_engine_105c: 21 },
+  { awg: "14", circular_mils: 4110, resistance_per_1000ft_ohms: 2.525, ampacity_outside_engine_105c: 35, ampacity_inside_engine_105c: 30 },
+  { awg: "12", circular_mils: 6530, resistance_per_1000ft_ohms: 1.588, ampacity_outside_engine_105c: 45, ampacity_inside_engine_105c: 38 },
+  { awg: "10", circular_mils: 10380, resistance_per_1000ft_ohms: 0.999, ampacity_outside_engine_105c: 60, ampacity_inside_engine_105c: 51 },
+  { awg: "8",  circular_mils: 16510, resistance_per_1000ft_ohms: 0.628, ampacity_outside_engine_105c: 80, ampacity_inside_engine_105c: 68 },
+  { awg: "6",  circular_mils: 26240, resistance_per_1000ft_ohms: 0.395, ampacity_outside_engine_105c: 120, ampacity_inside_engine_105c: 102 },
+  { awg: "4",  circular_mils: 41740, resistance_per_1000ft_ohms: 0.249, ampacity_outside_engine_105c: 160, ampacity_inside_engine_105c: 136 },
+  { awg: "2",  circular_mils: 66360, resistance_per_1000ft_ohms: 0.156, ampacity_outside_engine_105c: 210, ampacity_inside_engine_105c: 178 },
+  { awg: "1/0", circular_mils: 105600, resistance_per_1000ft_ohms: 0.098, ampacity_outside_engine_105c: 285, ampacity_inside_engine_105c: 242 },
+  { awg: "2/0", circular_mils: 133100, resistance_per_1000ft_ohms: 0.078, ampacity_outside_engine_105c: 330, ampacity_inside_engine_105c: 280 },
+  { awg: "4/0", circular_mils: 211600, resistance_per_1000ft_ohms: 0.049, ampacity_outside_engine_105c: 445, ampacity_inside_engine_105c: 378 },
+];
+
+export function calculateDCWireAndFuse(params: WireCalculationParams): WireCalculationResult {
+  const round_trip_feet = params.one_way_distance_feet * 2;
+  const allowable_v_drop = params.system_voltage * (params.allowable_drop_percent / 100);
+  const K = 10.75; // Copper constant
+
+  // 1. Calculate Required Circular Mils
+  const required_circular_mils = (K * params.amperage * round_trip_feet) / allowable_v_drop;
+
+  // 2. Filter AWG Table based on BOTH Circular Mils AND Ampacity Safety Limits
+  const matched_spec = AWG_TABLE.find(spec => {
+    const meets_drop = spec.circular_mils >= required_circular_mils;
+    const max_ampacity = params.is_engine_compartment 
+      ? spec.ampacity_inside_engine_105c 
+      : spec.ampacity_outside_engine_105c;
+    const meets_ampacity = max_ampacity >= params.amperage;
+    return meets_drop && meets_ampacity;
+  });
+
+  if (!matched_spec) {
+    throw new Error(`Exceeds 4/0 AWG limits. Consider upgrading system voltage to 24V or 48V.`);
+  }
+
+  // 3. Exact Calculations
+  const loop_resistance = (matched_spec.resistance_per_1000ft_ohms / 1000) * round_trip_feet;
+  const actual_v_drop = params.amperage * loop_resistance;
+  const actual_percent_drop = (actual_v_drop / params.system_voltage) * 100;
+
+  // 4. Overcurrent Protection Sizing (ABYC: Fuse within 7" of battery positive, max 150% of wire rating)
+  const wire_ampacity = params.is_engine_compartment 
+    ? matched_spec.ampacity_inside_engine_105c 
+    : matched_spec.ampacity_outside_engine_105c;
+  
+  // Standard recommended fuse is 125% of load, not exceeding wire ampacity
+  let recommended_fuse = Math.round(params.amperage * 1.25);
+  if (recommended_fuse > wire_ampacity) {
+    recommended_fuse = wire_ampacity;
+  }
+
+  // Select appropriate fuse form factor based on amperage
+  let fuse_type = "ATC/ATO Blade";
+  if (recommended_fuse > 30 && recommended_fuse <= 100) fuse_type = "MIDI / AMI Fuse";
+  if (recommended_fuse > 100 && recommended_fuse <= 300) fuse_type = "MRBF (Marine Rated Battery Fuse) or MEGA";
+  if (recommended_fuse > 300) fuse_type = "Class T Fuse (Essential for LiFePO4 high AIC ratings)";
+
+  return {
+    recommended_awg: matched_spec.awg,
+    exact_voltage_drop_volts: parseFloat(actual_v_drop.toFixed(2)),
+    exact_voltage_drop_percent: parseFloat(actual_percent_drop.toFixed(2)),
+    recommended_fuse_amps: recommended_fuse,
+    fuse_type,
+    notes: [
+      `Calculation based on ${round_trip_feet}ft total circuit path (positive + negative return).`,
+      `Wire must be stranded, tinned copper rated for 105°C minimum (UL 1426 / SAE J1127).`,
+      `Overcurrent protection must be installed within 7 inches of the power source terminal.`
+    ]
+  };
+}
+
+6. MCP Server Implementation (Cloudflare Worker)
+This runs natively inside Cloudflare Workers, exposing tools over standard HTTP JSON-RPC 2.0.
+Worker MCP Engine (src/index.ts)
+import { calculateDCWireAndFuse, WireCalculationParams } from "./mcp/tools/wire_calc";
+
+export interface Env {
+  DB: D1Database;
+  VECTORIZE: VectorizeIndex;
+  AI: any;
+  ASSETS_BUCKET: R2Bucket;
+  CDN_BASE_URL: string;
+}
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+
+    // MCP JSON-RPC Endpoint
+    if (request.method === "POST" && url.pathname === "/mcp") {
+      const authHeader = request.headers.get("Authorization");
+      if (!authHeader?.startsWith("Bearer ")) {
+        return new Response(JSON.stringify({ error: "Missing or invalid API key" }), { status: 401 });
+      }
+      const apiKey = authHeader.replace("Bearer ", "");
+
+      // 1. Authenticate & Meter Account
+      const account = await env.DB.prepare(
+        "SELECT id, balance_microcents FROM accounts WHERE api_key_hash = ? AND is_active = 1"
+      ).bind(apiKey).first<{ id: string; balance_microcents: number }>();
+
+      if (!account || account.balance_microcents <= 0) {
+        return new Response(JSON.stringify({ error: "Insufficient account balance or inactive key" }), { status: 402 });
+      }
+
+      const body: any = await request.json();
+      const response = await handleMcpRequest(body, env, account.id);
+      return new Response(JSON.stringify(response), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    return new Response("Campervan MCP Server Online", { status: 200 });
+  }
+};
+
+async function handleMcpRequest(body: any, env: Env, accountId: string): Promise<any> {
+  const { id, method, params } = body;
+
+  // MCP Protocol Discovery
+  if (method === "tools/list") {
+    return {
+      jsonrpc: "2.0",
+      id,
+      result: {
+        tools: [
+          {
+            name: "lookup_vehicle_electrical_specs",
+            description: "Queries vetted OEM Body and Equipment Mounting Manuals (Ford Transit, Sprinter, ProMaster) and component technical documentation.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                query: { type: "string", description: "Search query or question." },
+                chassis: { type: "string", enum: ["ford_transit", "mercedes_sprinter", "ram_promaster", "universal"] },
+                subsystem: { type: "string", enum: ["12v_dc", "48v_dc", "120v_ac", "chassis_interface", "plumbing"] }
+              },
+              required: ["query", "chassis"]
+            }
+          },
+          {
+            name: "calculate_dc_wire_and_fuse",
+            description: "Performs deterministic ABYC E-11 compliant DC cable gauge (AWG), voltage drop, and overcurrent fuse sizing.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                system_voltage: { type: "number", enum: [12, 24, 48] },
+                amperage: { type: "number" },
+                one_way_distance_feet: { type: "number" },
+                allowable_drop_percent: { type: "number", enum: [3, 10] },
+                is_engine_compartment: { type: "boolean" }
+              },
+              required: ["system_voltage", "amperage", "one_way_distance_feet", "allowable_drop_percent", "is_engine_compartment"]
+            }
+          }
+        ]
+      }
+    };
+  }
+
+  // MCP Tool Execution
+  if (method === "tools/call") {
+    const { name, arguments: args } = params;
+    const startTime = Date.now();
+    let toolResult: any;
+    let toolCostMicrocents = 2000; // $0.002000 per search call
+
+    if (name === "calculate_dc_wire_and_fuse") {
+      toolCostMicrocents = 500; // $0.000500 per deterministic math call
+      toolResult = calculateDCWireAndFuse(args as WireCalculationParams);
+    } else if (name === "lookup_vehicle_electrical_specs") {
+      toolResult = await executeHybridSearch(args, env);
+    } else {
+      return { jsonrpc: "2.0", id, error: { code: -32601, message: "Tool not found" } };
+    }
+
+    // Record usage and deduct balance (Atomic batch)
+    await env.DB.batch([
+      env.DB.prepare(
+        "UPDATE accounts SET balance_microcents = balance_microcents - ? WHERE id = ?"
+      ).bind(toolCostMicrocents, accountId),
+      env.DB.prepare(
+        "INSERT INTO usage_records (account_id, tool_name, cost_microcents, execution_time_ms) VALUES (?, ?, ?, ?)"
+      ).bind(accountId, name, toolCostMicrocents, Date.now() - startTime)
+    ]);
+
+    return {
+      jsonrpc: "2.0",
+      id,
+      result: {
+        content: [
+          {
+            type: "text",
+            text: typeof toolResult === "string" ? toolResult : JSON.stringify(toolResult, null, 2)
+          }
+        ]
+      }
+    };
+  }
+
+  return { jsonrpc: "2.0", id, error: { code: -32600, message: "Invalid Request" } };
+}
+
+async function executeHybridSearch(args: any, env: Env): Promise<string> {
+  // 1. Generate Query Vector Embedding via Workers AI
+  const embeddingResponse = await env.AI.run("@cf/baai/bge-base-en-v1.5", {
+    text: [args.query]
+  });
+  const queryVector = embeddingResponse.data[0];
+
+  // 2. Query Vectorize for top 3 Nearest Neighbors
+  const vectorMatches = await env.VECTORIZE.query(queryVector, {
+    topK: 3,
+    returnMetadata: "all"
+  });
+
+  if (!vectorMatches.matches || vectorMatches.matches.length === 0) {
+    return "No authoritative specifications matched your query.";
+  }
+
+  const chunkIds = vectorMatches.matches.map((m: any) => m.id);
+
+  // 3. Hydrate Full Text & Metadata from Cloudflare D1
+  const placeholders = chunkIds.map(() => "?").join(",");
+  const rows = await env.DB.prepare(`
+    SELECT c.id, c.page_number, c.subsystem, c.chunk_text, d.title, d.manufacturer, s.r2_key, s.caption
+    FROM document_chunks c
+    JOIN documents d ON c.document_id = d.id
+    LEFT JOIN schematic_images s ON c.schematic_image_id = s.id
+    WHERE c.id IN (${placeholders})
+  `).bind(...chunkIds).all();
+
+  // 4. Assemble Grounded Context Block
+  let output = `### Authoritative OEM & Subsystem Specifications\n\n`;
+  for (const row of rows.results as any[]) {
+    output += `**Source:** ${row.manufacturer} - ${row.title} (Page ${row.page_number})\n`;
+    output += `**Subsystem:** ${row.subsystem}\n`;
+    output += `**Specification Content:**\n${row.chunk_text}\n`;
+    if (row.r2_key) {
+      output += `**Schematic Diagram Link:** ${env.CDN_BASE_URL}/${row.r2_key} (${row.caption})\n`;
+    }
+    output += `\n---\n`;
+  }
+
+  return output;
+}
+
+7. End-to-End Query Lifecycle Trace
+To verify how this architecture functions during execution, consider the step-by-step trace of a live request:
+[Agent Query]
+"How do I wire an EcoFlow Power Kit to a 2023 Ford Transit alternator without tripping fuses?"
+                                      │
+                                      ▼
+[Client Calls MCP Tool] ───► POST /mcp (JSON-RPC 2.0)
+                                      │
+                                      ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ CLOUDFLARE WORKER ROUTE EXECUTION:                                     │
+│ 1. Authenticate API Key & verify account microcent balance             │
+│ 2. Embed query vector via @cf/baai/bge-base-en-v1.5                    │
+│ 3. Execute Vectorize kNN Search (Top 3 matches returned)               │
+│ 4. Hydrate chunk payloads from D1 (BEMM section 4.18, Page 148)        │
+│ 5. Execute calculateDCWireAndFuse (60A continuous, 15ft one-way)       │
+│ 6. Deduct 2,500 microcents ($0.0025) from account balance              │
+│ 7. Return structured markdown context to client                        │
+└────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+[Frontier LLM Formulates Verified Response]
+"Tap CCP2 on the driver's seat pedestal using an M8 nut. Do not connect
+directly to the battery under the seat. For your 15-foot run (30ft circuit),
+use 4 AWG 105°C tinned copper with a 70A–80A MIDI fuse."
+
+8. Deployment & Execution Instructions for Coding AI Agents
+Copy and paste the following operational prompt directly into your coding AI agent (Cursor, Claude Code, etc.) to trigger implementation:
+You are an expert systems engineer specializing in Cloudflare Workers, TypeScript, and the Model Context Protocol.
+
+TASK:
+Scaffold and implement the Campervan Domain Intelligence MCP server following the specification provided above.
+
+EXECUTION ORDER:
+1. Initialize a TypeScript Node.js project with Wrangler, @cloudflare/workers-types, and @modelcontextprotocol/sdk.
+2. Generate wrangler.toml with D1, Vectorize, and R2 bindings as specified.
+3. Write migrations/0001_init_schema.sql defining the tables: documents, document_chunks, schematic_images, accounts, and usage_records.
+4. Implement src/mcp/tools/wire_calc.ts with the full AWG_TABLE and the exact ABYC E-11 mathematical formula. Ensure circular mils, temperature ampacity adjustments, and fuse sizing rules match the spec.
+5. Implement src/index.ts handling the /mcp endpoint with JSON-RPC 2.0 tools/list and tools/call handlers, API key validation, D1 balance deduction, and Vectorize hydration.
+6. Write pipeline/ingest.py using PyMuPDF to extract text, isolate schematics to R2, generate 768-dim embeddings, and populate D1 and Vectorize.
+
+Verify all code is fully typed with zero unhandled 'any' types and includes defensive boundary checking on all array indexing.
+
