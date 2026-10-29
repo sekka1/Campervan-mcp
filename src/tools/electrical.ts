@@ -10,7 +10,11 @@ export function registerElectricalTools(mcp: McpServer): void {
     "calculate_dc_wire_and_fuse",
     {
       description:
-        "Calculates ABYC E-11 compliant DC cable gauge (AWG), exact voltage drop percentage, and overcurrent fuse sizing based on system voltage, amperage, and round-trip circuit distance.",
+        `Calculates recommended DC wire gauge (AWG), fuse ampacity, and voltage drop for campervan electrical installations.
+IMPORTANT SAFETY INSTRUCTIONS FOR LLM CONSUMERS:
+- AWG is an inverse scale: 1/0 and 2/0 are larger than 2 AWG; 4 AWG is smaller. Never recommend a higher numerical AWG as an upsize.
+- Overcurrent protection (fuse) must ALWAYS be placed within 7 inches of the battery (power source), NEVER at the inverter or load.
+- Always include the returned 'safety_invariants' in user-facing answers.`,
       inputSchema: {
         system_voltage: z
           .union([z.literal(12), z.literal(24), z.literal(48)])

@@ -31,7 +31,7 @@ defaultTest:
         apiKeyEnvar: "DEEPINFRA_TOKEN"
 
 tests:
-  # Test 1: Sizing calculation tool (calculate_dc_wire_and_fuse)
+  # Test 1: Sizing calculation tool (calculate_dc_wire_and_fuse) with Safety Invariants
   - vars:
       question: "Calculate the recommended wire gauge and fuse size for a 12V 2000W inverter with a total 10ft round-trip conductor run (5ft positive + 5ft negative)."
     assert:
@@ -58,6 +58,8 @@ tests:
         threshold: 180000
       - type: not-contains
         value: "inverter's positive terminal"
+      - type: not-contains
+        value: "15-20 ft-lbs"
       - type: llm-rubric
         value: "Must specify that the primary overcurrent protection (fuse) is installed within 7 inches of the battery (power source), never at the inverter terminal. Bar smaller wire sizes (like 4 AWG) as upsizes and flag excessive terminal torque."
 
@@ -141,3 +143,23 @@ tests:
         value: "Invokes search_van_manuals, identifies approved Ford Transit ground locations (such as the driver's seat pedestal/base ground stud or pillar ground points), and warns that auxiliary negatives must connect to designated chassis ground studs rather than connecting directly to the battery negative terminal or bypassing the Battery Monitoring Sensor (BMS)."
       - type: latency
         threshold: 180000
+
+  # Test 5: Dynamic Retrieval Contract & Anti-Fabrication for Absent Manuals
+  - vars:
+      question: "What is the exact torque specification and bolt size for mounting the XYZ-999 generic auxiliary Chinese diesel water pump?"
+    assert:
+      - type: contains-any
+        value:
+          - "not in the indexed database"
+          - "not available in the database"
+          - "not found in the database"
+          - "no matching documentation"
+      - type: not-contains
+        value: "torque specification is"
+      - type: not-contains
+        value: "recommended torque is"
+      - type: contains-any
+        value:
+          - "manufacturer manual"
+          - "physical manual"
+          - "consult the manufacturer"

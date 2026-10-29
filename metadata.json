@@ -1,0 +1,6 @@
+{
+  "name": "Campervan MCP Server & Electrical Workbench",
+  "description": "Production-grade Model Context Protocol (MCP) server for campervan technical manuals and deterministic ABYC E-11 electrical calculations with negative safety constraints.",
+  "permissions": [],
+  "capabilities": []
+}

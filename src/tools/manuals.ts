@@ -2,14 +2,76 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { hybridSearch } from "../utils/db.js";
 
+export interface Env {
+  DB?: {
+    prepare: (query: string) => {
+      bind: (...args: unknown[]) => {
+        all: () => Promise<{ results?: Record<string, unknown>[] }>;
+      };
+    };
+  };
+  VECTORIZE?: {
+    query: (vector: number[], options?: Record<string, unknown>) => Promise<{ matches?: Array<{ id: string; score?: number }> }>;
+  };
+  VECTOR_INDEX?: {
+    query: (vector: number[], options?: Record<string, unknown>) => Promise<{ matches?: Array<{ id: string; score?: number }> }>;
+  };
+  AI?: {
+    run: (model: string, input: Record<string, unknown>) => Promise<{ data?: number[][]; result?: { data?: number[][] } }>;
+  };
+  ASSETS_BUCKET?: unknown;
+  CDN_BASE_URL?: string;
+  DEEPINFRA_TOKEN?: string;
+  EMBEDDING_PROVIDER?: string;
+  [key: string]: unknown;
+}
+
+export interface ManualChunkResult {
+  id: string;
+  document_id: string;
+  title: string;
+  manufacturer: string;
+  page_number: number;
+  subsystem?: string;
+  chunk_text: string;
+  score?: number;
+  schematic_image_url?: string;
+  schematic_caption?: string;
+}
+
+export interface SearchFilterOptions {
+  chassis?: "ford_transit" | "mercedes_sprinter" | "ram_promaster" | "universal" | string;
+  subsystem?: "12v_dc" | "48v_dc" | "120v_ac" | "plumbing" | "heating_cooling" | "structural" | "chassis_interface" | string;
+  category?: "chassis" | "climate" | "power" | "plumbing" | "other" | string;
+  manufacturer?: string;
+  model?: string;
+  market?: "us" | "eu" | "global" | string;
+  model_year?: number;
+  source_filter?: string;
+  limit?: number;
+  min_score?: number;
+}
+
+export interface RetrievalContract {
+  strict_grounding_rule: string;
+  missing_manual_rule: string;
+  no_matches_guidance?: string;
+}
+
+export interface SearchVanManualsResponse {
+  retrieval_metadata: {
+    query: string;
+    count: number;
+    matches_found: boolean;
+    filter_applied?: SearchFilterOptions;
+    retrieval_contract: RetrievalContract;
+    advice?: string;
+  };
+  results: ManualChunkResult[];
+}
+
 /**
- * Simple embedding generation using Cloudflare AI text embeddings.
- * Falls back to a zero vector if AI binding is unavailable (e.g., local dev).
- *
- * Uses the `@cf/baai/bge-base-en-v1.5` model via the `AI` binding, which
- * produces 768-dimensional vectors, matching the dimensionality of the
- * `van_manuals_index` Vectorize index populated by
- * `scripts/ingest-manuals.ts` and the ingest-manuals GitHub Actions workflow.
+ * Generates embeddings via Cloudflare Workers AI.
  */
 async function generateWorkersAiEmbedding(text: string, ai: Ai): Promise<number[]> {
   try {
@@ -30,6 +92,9 @@ async function generateWorkersAiEmbedding(text: string, ai: Ai): Promise<number[
   }
 }
 
+/**
+ * Generates embeddings via DeepInfra REST endpoint with emergency truncation recovery.
+ */
 async function generateDeepInfraEmbedding(text: string, token: string): Promise<number[]> {
   const maxChars = 1000;
   let sanitized = text;
@@ -51,12 +116,6 @@ async function generateDeepInfraEmbedding(text: string, token: string): Promise<
   if (!response.ok) {
     const errorBody = await response.text();
     console.error("DeepInfra API error [HTTP " + response.status + "]: " + errorBody);
-    console.error(
-      "Offending query: length=" +
-        sanitized.length +
-        ", preview=" +
-        JSON.stringify(sanitized.slice(0, 120))
-    );
     if (
       response.status === 400 &&
       (errorBody.includes("input tokens") ||
@@ -125,14 +184,24 @@ export async function generateEmbedding(
   if (ai) {
     return await generateWorkersAiEmbedding(text, ai);
   }
-
   console.warn(
     "Workers AI binding (env.AI) is unavailable; returning zero vector for local dev/testing."
   );
   return new Array(768).fill(0) as number[];
 }
 
-export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex, ai?: Ai, db?: D1Database, cdnBaseUrl?: string, deepinfraToken?: string, embeddingProvider?: string): void {
+/**
+ * Registers manual search tools on McpServer with directive grounding contracts.
+ */
+export function registerManualTools(
+  mcp: McpServer,
+  vectorIndex: VectorizeIndex,
+  ai?: Ai,
+  db?: D1Database,
+  cdnBaseUrl?: string,
+  deepinfraToken?: string,
+  embeddingProvider?: string
+): void {
   // -------------------------------------------------------------------------
   // Tool: search_van_manuals
   // -------------------------------------------------------------------------
@@ -140,7 +209,10 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
     "search_van_manuals",
     {
       description:
-        "Searches vetted OEM vehicle manuals (Ford Transit, Mercedes Sprinter, Ram ProMaster), electrical components (Victron, Renogy, REDARC), and upfitter standards. Returns authoritative text chunks, torque specs, part numbers, and schematic links. CRITICAL: When referencing diagrams in your response, you MUST use the exact 'schematic_markdown' or 'schematic_url' string verbatim without altering the character casing, as Cloudflare R2 object storage keys are strictly case-sensitive.",
+        `Searches indexed technical documentation, OEM body builder manuals (BEMM), and component guides.
+IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
+- Adhere strictly to the returned 'retrieval_contract'.
+- If the specific vehicle manual, appliance manual, or component is not present in the search results, state clearly that the documentation is not available in the database. Never hallucinate torque specs, screw sizes, or part numbers.`,
       inputSchema: {
         query: z
           .string()
@@ -154,7 +226,7 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
           .min(1)
           .max(20)
           .default(8)
-          .describe("Number of most relevant document chunks to return (default 5, max 20)"),
+          .describe("Number of most relevant document chunks to return (default 8, max 20)"),
         source_filter: z
           .string()
           .optional()
@@ -172,7 +244,7 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
         category: z
           .enum(["chassis", "climate", "power", "plumbing", "other"])
           .optional()
-          .describe("Optional document category filter. Leave omitted unless searching exclusively for a specific document type. Note: Vehicle body & electrical mounting manuals (like Ford BEMM) are under 'chassis', even for electrical/wiring topics."),
+          .describe("Optional document category filter."),
         manufacturer: z
           .string()
           .optional()
@@ -180,7 +252,7 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
         model: z
           .string()
           .optional()
-          .describe("Optional short model name in lowercase (e.g., 'transit', 'sprinter', 'promaster'). Do not include the manufacturer name."),
+          .describe("Optional short model name in lowercase (e.g., 'transit', 'sprinter', 'promaster')."),
         market: z
           .enum(["us", "eu", "global"])
           .default("us")
@@ -221,16 +293,31 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
         ...(args.source_filter ? { source: args.source_filter } : {}),
       };
 
-      const payload =
-        results.length === 0
-          ? {
-              results: [],
-              message: "No relevant documentation found for the given query.",
-              query: args.query,
-              applied_filters: appliedFilters,
-            }
-          : {
-              results: results.map(({ id, source, document_title, manufacturer, model, market, model_year, ...rest }) => ({
+      const retrievalContract = {
+        strict_grounding_rule:
+          "Only provide specifications, dimensions, or torque values if explicitly contained in the retrieved manual chunks below.",
+        missing_manual_rule:
+          "If the specific manual, model, or component requested by the user is not present in the returned chunks, explicitly state: 'The specific manual for [component/system] is not in the indexed database, so an authoritative specification cannot be provided.' Never guess torque values or document part numbers.",
+      };
+
+      const payload = {
+        retrieval_metadata: {
+          query: args.query,
+          count: results.length,
+          matches_found: results.length > 0,
+          filter_applied: appliedFilters,
+          retrieval_contract: retrievalContract,
+          ...(results.length === 0
+            ? {
+                advice:
+                  "No matching documentation found in the current database for this query. Advise the user to consult the physical manufacturer manual and do not guess fastener or dimensional specs.",
+              }
+            : {}),
+        },
+        results:
+          results.length === 0
+            ? []
+            : results.map(({ id, source, document_title, manufacturer, model, market, model_year, ...rest }) => ({
                 chunk_id: id,
                 source: source && source !== "unknown" ? source : (document_title ?? "unknown"),
                 document_title,
@@ -240,16 +327,24 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
                 model_year: model_year ?? undefined,
                 ...rest,
               })),
-              count: results.length,
-              query: args.query,
-              applied_filters: appliedFilters,
-            };
+        count: results.length,
+        query: args.query,
+        matches_found: results.length > 0,
+        applied_filters: appliedFilters,
+        ...(results.length === 0
+          ? {
+              message:
+                "No relevant documentation found for the given query.",
+            }
+          : {}),
+      };
 
       return {
         content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
       };
     }
   );
+
   // -------------------------------------------------------------------------
   // Diagnostic Tool: inspect_manual_chunks
   // -------------------------------------------------------------------------
@@ -303,4 +398,137 @@ export function registerManualTools(mcp: McpServer, vectorIndex: VectorizeIndex,
       }
     );
   }
+}
+
+/**
+ * Searches indexed technical documentation across Vectorize and D1.
+ */
+export async function executeVectorSearch(
+  query: string,
+  env?: Env,
+  filterOptions?: SearchFilterOptions
+): Promise<ManualChunkResult[]> {
+  if (!query || query.trim() === "") {
+    return [];
+  }
+
+  const vectorize = env?.VECTOR_INDEX || env?.VECTORIZE;
+  const ai = env?.AI;
+  const db = env?.DB;
+
+  if (vectorize && db) {
+    try {
+      let queryVector: number[] = [];
+      if (ai) {
+        const embeddingResponse = await ai.run("@cf/baai/bge-base-en-v1.5", { text: [query] });
+        queryVector = embeddingResponse?.data?.[0] || embeddingResponse?.result?.data?.[0] || [];
+      } else if (env?.DEEPINFRA_TOKEN) {
+        queryVector = await generateDeepInfraEmbedding(query, String(env.DEEPINFRA_TOKEN));
+      }
+
+      const topK = filterOptions?.limit || 3;
+      const vectorMatches = await vectorize.query(queryVector, {
+        topK,
+        returnMetadata: "all",
+      });
+
+      if (!vectorMatches?.matches || vectorMatches.matches.length === 0) {
+        return [];
+      }
+
+      const minScore = filterOptions?.min_score ?? 0.65;
+      const validMatches = vectorMatches.matches.filter(
+        (m: { score?: number }) => (m.score ?? 1) >= minScore
+      );
+
+      if (validMatches.length === 0) {
+        return [];
+      }
+
+      const chunkIds = validMatches.map((m: { id: string }) => m.id);
+      const placeholders = chunkIds.map(() => "?").join(",");
+      let sql = `
+        SELECT c.id, c.document_id, c.page_number, c.subsystem, c.chunk_text,
+               d.title, d.manufacturer, s.r2_key, s.caption
+        FROM document_chunks c
+        JOIN documents d ON c.document_id = d.id
+        LEFT JOIN schematic_images s ON c.schematic_image_id = s.id
+        WHERE c.id IN (${placeholders})
+      `;
+
+      const binds: (string | number)[] = [...chunkIds];
+      if (filterOptions?.subsystem) {
+        sql += ` AND c.subsystem = ?`;
+        binds.push(filterOptions.subsystem);
+      }
+
+      const rows = await db.prepare(sql).bind(...binds).all();
+      const cdnUrl = env?.CDN_BASE_URL || "https://assets.campervan-mcp.internal";
+
+      return ((rows?.results as Record<string, unknown>[]) || []).map((row) => ({
+        id: String(row.id),
+        document_id: String(row.document_id),
+        title: String(row.title),
+        manufacturer: String(row.manufacturer),
+        page_number: Number(row.page_number),
+        subsystem: row.subsystem ? String(row.subsystem) : undefined,
+        chunk_text: String(row.chunk_text),
+        schematic_image_url: row.r2_key ? `${cdnUrl}/${row.r2_key}` : undefined,
+        schematic_caption: row.caption ? String(row.caption) : undefined,
+      }));
+    } catch (err) {
+      console.error("[search_van_manuals] Search error:", err);
+      return [];
+    }
+  }
+
+  return [];
+}
+
+/**
+ * Direct function caller: searchVanManuals
+ */
+export async function searchVanManuals(
+  query: string,
+  env?: Env,
+  filterOptions?: SearchFilterOptions
+): Promise<SearchVanManualsResponse> {
+  const searchResults = await executeVectorSearch(query, env, filterOptions);
+  const matchesFound = searchResults.length > 0;
+
+  const baseContract: RetrievalContract = {
+    strict_grounding_rule:
+      "Only provide specifications, dimensions, or torque values if explicitly contained in the retrieved manual chunks below.",
+    missing_manual_rule:
+      "If the specific manual, model, or component requested by the user is not present in the returned chunks, explicitly state: 'The specific manual for [component/system] is not in the indexed database, so an authoritative specification cannot be provided.' Never guess torque values or document part numbers.",
+  };
+
+  if (!matchesFound) {
+    baseContract.no_matches_guidance =
+      "No matching documentation found in the current database for this query. Advise the user to consult the physical manufacturer manual and do not guess fastener or dimensional specs.";
+
+    return {
+      retrieval_metadata: {
+        query,
+        count: 0,
+        matches_found: false,
+        filter_applied: filterOptions,
+        retrieval_contract: baseContract,
+        advice:
+          "No matching documentation found in the current database for this query. Advise the user to consult the physical manufacturer manual and do not guess fastener or dimensional specs.",
+      },
+      results: [],
+    };
+  }
+
+  return {
+    retrieval_metadata: {
+      query,
+      count: searchResults.length,
+      matches_found: true,
+      filter_applied: filterOptions,
+      retrieval_contract: baseContract,
+    },
+    results: searchResults,
+  };
 }
