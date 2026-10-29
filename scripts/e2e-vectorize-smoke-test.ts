@@ -46,7 +46,10 @@ import {
 import { prepareSchematics } from "./schematics";
 import { buildR2DeleteCandidateIds, buildR2ManualChunks, createR2Client, R2_BUCKET_NAME } from "./sync-r2-manuals";
 
-const REPO_ROOT = resolve(__dirname, "..");
+const REPO_ROOT =
+  typeof __dirname !== "undefined"
+    ? resolve(__dirname, "..")
+    : resolve(process.cwd());
 const FIXTURE_PDF_PATH = resolve(REPO_ROOT, "tests/fixtures/sample-manual.pdf");
 const SCHEMATIC_FIXTURE_PDF_PATH = resolve(REPO_ROOT, "tests/fixtures/schematic-manual.pdf");
 
