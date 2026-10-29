@@ -85,7 +85,8 @@ IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
         },
         subsystem: {
           type: "string",
-          description: "Optional subsystem filter",
+          description:
+            "Filter by van subsystem. Allowed values: '12v_dc' (electrical, dc, battery, wiring), '48v_dc', '120v_ac' (ac, inverter, shore power), 'plumbing' (water, tanks), 'heating_cooling' (covers climate, ventilation, fans, A/C, and heaters), 'structural' (body, roof, mounting), 'chassis_interface' (CAN bus, signals). If unsure, omit this field.",
         },
         manufacturer: {
           type: "string",

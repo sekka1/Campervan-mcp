@@ -4,7 +4,7 @@
   "description": "Campervan Technical & Electrical MCP Server built on Cloudflare Workers",
   "type": "module",
   "scripts": {
-    "dev": "vite --port=3000 --host=0.0.0.0",
+    "dev": "node scripts/dev-server.mjs",
     "build": "vite build",
     "deploy": "cf deploy",
     "test": "vitest run",
