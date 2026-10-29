@@ -39,9 +39,74 @@ export interface ManualChunkResult {
   schematic_caption?: string;
 }
 
+export const SubsystemEnum = z.enum([
+  "12v_dc",
+  "48v_dc",
+  "120v_ac",
+  "plumbing",
+  "heating_cooling",
+  "structural",
+  "chassis_interface",
+]);
+
+export type Subsystem = z.infer<typeof SubsystemEnum>;
+
+/**
+ * Mapping dictionary for common semantic drift terms hallucinated by LLMs.
+ */
+export const SUBSYSTEM_ALIASES: Record<string, Subsystem> = {
+  // heating_cooling aliases (climate, fans, HVAC, heaters, A/C)
+  climate: "heating_cooling",
+  hvac: "heating_cooling",
+  ventilation: "heating_cooling",
+  fan: "heating_cooling",
+  air_conditioning: "heating_cooling",
+  ac_cooling: "heating_cooling",
+  heater: "heating_cooling",
+  heating: "heating_cooling",
+  cooling: "heating_cooling",
+  // 12v_dc aliases
+  electrical: "12v_dc",
+  dc: "12v_dc",
+  wiring: "12v_dc",
+  battery: "12v_dc",
+  // 120v_ac aliases
+  ac: "120v_ac",
+  inverter_ac: "120v_ac",
+  shore_power: "120v_ac",
+  // plumbing aliases
+  water: "plumbing",
+  greywater: "plumbing",
+  freshwater: "plumbing",
+  // structural aliases
+  body: "structural",
+  roof: "structural",
+  mounting: "structural",
+  // chassis_interface aliases
+  interface: "chassis_interface",
+  can_bus: "chassis_interface",
+  signals: "chassis_interface",
+  chassis: "chassis_interface",
+};
+
+export const SubsystemSchema = z
+  .preprocess((val) => {
+    if (typeof val === "string") {
+      const normalized = val.trim().toLowerCase();
+      if (normalized in SUBSYSTEM_ALIASES) {
+        return SUBSYSTEM_ALIASES[normalized];
+      }
+      return normalized;
+    }
+    return val;
+  }, SubsystemEnum.optional())
+  .describe(
+    "Filter by van subsystem. Allowed values: '12v_dc' (electrical, dc, battery, wiring), '48v_dc', '120v_ac' (ac, inverter, shore power), 'plumbing' (water, tanks), 'heating_cooling' (covers climate, ventilation, fans, A/C, and heaters), 'structural' (body, roof, mounting), 'chassis_interface' (CAN bus, signals). If unsure, omit this field."
+  );
+
 export interface SearchFilterOptions {
   chassis?: "ford_transit" | "mercedes_sprinter" | "ram_promaster" | "universal" | string;
-  subsystem?: "12v_dc" | "48v_dc" | "120v_ac" | "plumbing" | "heating_cooling" | "structural" | "chassis_interface" | string;
+  subsystem?: Subsystem | string;
   category?: "chassis" | "climate" | "power" | "plumbing" | "other" | string;
   manufacturer?: string;
   model?: string;
@@ -237,10 +302,7 @@ IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
           .string()
           .optional()
           .describe("Optional chassis filter (e.g., 'transit', 'sprinter', 'promaster'); 'universal' documents are always included"),
-        subsystem: z
-          .enum(["12v_dc", "48v_dc", "120v_ac", "plumbing", "heating_cooling", "structural", "chassis_interface"])
-          .optional()
-          .describe("Optional subsystem filter"),
+        subsystem: SubsystemSchema,
         category: z
           .enum(["chassis", "climate", "power", "plumbing", "other"])
           .optional()

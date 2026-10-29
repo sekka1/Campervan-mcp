@@ -175,5 +175,55 @@ describe("Dynamic Retrieval Grounding Contract & Manuals MCP Tools", () => {
       expect(parsed.retrieval_metadata.retrieval_contract).toBeDefined();
       expect(parsed.retrieval_metadata.retrieval_contract.strict_grounding_rule).toBeDefined();
     });
+
+    it("coerces hallucinated subsystem aliases like 'climate' without throwing -32602 schema error", async () => {
+      const req = {
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: {
+          name: "search_van_manuals",
+          arguments: {
+            query: "Roof ventilation fan wiring diagram",
+            subsystem: "climate" // Qwen/model semantic drift term
+          }
+        }
+      };
+
+      const res = await handleMcpRequest(req);
+      expect(res.jsonrpc).toBe("2.0");
+      expect(res.error).toBeUndefined();
+      expect(res.result).toBeDefined();
+      expect(res.result.content).toBeDefined();
+      expect(res.result.content[0].text).toContain("retrieval_metadata");
+    });
+  });
+
+  describe("4. SubsystemSchema & Alias Preprocessing", () => {
+    it("normalizes casing, whitespace, and maps semantic drift synonyms", async () => {
+      const { SubsystemSchema, SUBSYSTEM_ALIASES } = await import("../../src/tools/manuals.ts");
+
+      expect(SUBSYSTEM_ALIASES.climate).toBe("heating_cooling");
+
+      // Direct enum values
+      expect(SubsystemSchema.parse("heating_cooling")).toBe("heating_cooling");
+      expect(SubsystemSchema.parse("12v_dc")).toBe("12v_dc");
+
+      // Casing and whitespace
+      expect(SubsystemSchema.parse("  CLIMATE  ")).toBe("heating_cooling");
+      expect(SubsystemSchema.parse("HVAC")).toBe("heating_cooling");
+      expect(SubsystemSchema.parse("fan")).toBe("heating_cooling");
+      expect(SubsystemSchema.parse("ventilation")).toBe("heating_cooling");
+      expect(SubsystemSchema.parse("electrical")).toBe("12v_dc");
+      expect(SubsystemSchema.parse("dc")).toBe("12v_dc");
+      expect(SubsystemSchema.parse("ac")).toBe("120v_ac");
+      expect(SubsystemSchema.parse("water")).toBe("plumbing");
+      expect(SubsystemSchema.parse("roof")).toBe("structural");
+      expect(SubsystemSchema.parse("can_bus")).toBe("chassis_interface");
+
+      // Undefined passes through as optional
+      expect(SubsystemSchema.parse(undefined)).toBeUndefined();
+    });
   });
 });
+
