@@ -71,7 +71,11 @@ IMPORTANT SAFETY INSTRUCTIONS FOR LLM CONSUMERS:
     description: `Searches indexed technical documentation, OEM body builder manuals (BEMM), and component guides.
 IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
 - Adhere strictly to the returned 'retrieval_contract'.
-- If the specific vehicle manual, appliance manual, or component is not present in the search results, state clearly that the documentation is not available in the database. Never hallucinate torque specs, screw sizes, or part numbers.`,
+- CRITICAL NEGATIVE CONSTRAINT: When a requested third-party component (e.g., MaxxFan, specific aftermarket appliance) is NOT found in the indexed manuals:
+  1. State clearly that the component manual is not in the database.
+  2. Provide ONLY vehicle-side OEM chassis constraints (e.g., roof bow clearance, sealant requirements).
+  3. DO NOT attempt to provide "widely published", "typical", or general specifications for the missing component (especially torque, screw sizes, or cut-out tolerances).
+  4. Explicitly state: "Consult the manufacturer's manual for torque and cut-out specifications, as no official torque value is provided in vehicle documentation."`,
     inputSchema: {
       type: "object",
       properties: {

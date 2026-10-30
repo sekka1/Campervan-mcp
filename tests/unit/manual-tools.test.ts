@@ -15,9 +15,15 @@ describe("Dynamic Retrieval Grounding Contract & Manuals MCP Tools", () => {
       expect(response.retrieval_metadata.matches_found).toBe(false);
       expect(response.retrieval_metadata.count).toBe(0);
 
-      // Verify explicit advice forbidding guessing
-      expect(response.retrieval_metadata.advice).toBe(
-        "No matching documentation found in the current database for this query. Advise the user to consult the physical manufacturer manual and do not guess fastener or dimensional specs."
+      // Verify explicit advice forbidding guessing and requiring vehicle-side OEM constraints only
+      expect(response.retrieval_metadata.advice).toContain(
+        "Consult the manufacturer's manual for torque and cut-out specifications"
+      );
+      expect(response.retrieval_metadata.advice).toContain(
+        "no official torque value is provided in vehicle documentation"
+      );
+      expect(response.retrieval_metadata.advice).toContain(
+        "provide ONLY vehicle-side OEM constraints"
       );
 
       // Verify retrieval contract rules
@@ -26,10 +32,16 @@ describe("Dynamic Retrieval Grounding Contract & Manuals MCP Tools", () => {
         "Only provide specifications, dimensions, or torque values if explicitly contained in the retrieved manual chunks below."
       );
       expect(retrieval_contract.missing_manual_rule).toContain(
-        "The specific manual for [component/system] is not in the indexed database, so an authoritative specification cannot be provided."
+        "CRITICAL NEGATIVE CONSTRAINT"
       );
       expect(retrieval_contract.missing_manual_rule).toContain(
-        "Never guess torque values or document part numbers."
+        "Provide ONLY vehicle-side OEM chassis constraints (e.g., roof bow clearance, sealant requirements)."
+      );
+      expect(retrieval_contract.missing_manual_rule).toContain(
+        "DO NOT attempt to provide 'widely published', 'typical', or general specifications"
+      );
+      expect(retrieval_contract.missing_manual_rule).toContain(
+        "Consult the manufacturer's manual for torque and cut-out specifications, as no official torque value is provided in vehicle documentation."
       );
     });
   });
@@ -111,8 +123,9 @@ describe("Dynamic Retrieval Grounding Contract & Manuals MCP Tools", () => {
 
       const desc = manualTool!.description;
       expect(desc).toContain("Adhere strictly to the returned 'retrieval_contract'.");
-      expect(desc).toContain("If the specific vehicle manual, appliance manual, or component is not present in the search results, state clearly that the documentation is not available in the database.");
-      expect(desc).toContain("Never hallucinate torque specs, screw sizes, or part numbers.");
+      expect(desc).toContain("CRITICAL NEGATIVE CONSTRAINT");
+      expect(desc).toContain("Provide ONLY vehicle-side OEM chassis constraints");
+      expect(desc).toContain("Consult the manufacturer's manual for torque and cut-out specifications");
     });
   });
 
