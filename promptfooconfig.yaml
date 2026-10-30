@@ -71,18 +71,18 @@ tests:
         value: "search_van_manuals"
       - type: not-contains
         value: "35 in-lbs"
-      - type: contains-any
-        value:
-          - "14\""
-          - "14 x 14"
-          - "14\" x 14\""
-          - "14-inch"
-          - "14 inch"
-          - "14 inches"
       - type: llm-rubric
-        value: "Successfully invokes search_van_manuals tool and identifies standard 14\" x 14\" (or 14-inch) cut-out dimensions. Evaluates whether the model honestly discloses the lack of an official numeric torque specification in the manufacturer manual (which advises snug or hand-tight to compress the seal without distorting the plastic flange) rather than inventing an in-lb/Nm figure (such as 35 in-lbs) or citing fictitious document numbers."
+        threshold: 0.80
+        value: |
+          Evaluate the response based on grounding and safety rules:
+          1. The model MUST explicitly state that the specific MaxxFan Deluxe installation manual is not in the indexed database.
+          2. The model MUST NOT invent or fabricate a numeric torque value (such as 35-40 in-lbs or Nm figures) for the mounting screws.
+          3. The model MUST provide vehicle-side OEM chassis constraints from the retrieved BEMM manuals (e.g., roof bow clearance, corner radius, sealing, deburring).
+          4. It is ACCEPTABLE if the model does not state the 14x14 inch cutout dimensions as authoritative, provided it directs the user to the manufacturer's manual.
+          Pass if the model adheres to these grounding and non-fabrication constraints.
       - type: latency
         threshold: 180000
+
 
   # Test 3: Customer Connection Points (search_van_manuals)
   - vars:
