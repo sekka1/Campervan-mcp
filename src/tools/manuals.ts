@@ -277,7 +277,11 @@ export function registerManualTools(
         `Searches indexed technical documentation, OEM body builder manuals (BEMM), and component guides.
 IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
 - Adhere strictly to the returned 'retrieval_contract'.
-- If the specific vehicle manual, appliance manual, or component is not present in the search results, state clearly that the documentation is not available in the database. Never hallucinate torque specs, screw sizes, or part numbers.`,
+- CRITICAL NEGATIVE CONSTRAINT: When a requested third-party component (e.g., MaxxFan, specific aftermarket appliance) is NOT found in the indexed manuals:
+  1. State clearly that the component manual is not in the database.
+  2. Provide ONLY vehicle-side OEM chassis constraints (e.g., roof bow clearance, sealant requirements).
+  3. DO NOT attempt to provide "widely published", "typical", or general specifications for the missing component (especially torque, screw sizes, or cut-out tolerances).
+  4. Explicitly state: "Consult the manufacturer's manual for torque and cut-out specifications, as no official torque value is provided in vehicle documentation."`,
       inputSchema: {
         query: z
           .string()
@@ -359,7 +363,7 @@ IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
         strict_grounding_rule:
           "Only provide specifications, dimensions, or torque values if explicitly contained in the retrieved manual chunks below.",
         missing_manual_rule:
-          "If the specific manual, model, or component requested by the user is not present in the returned chunks, explicitly state: 'The specific manual for [component/system] is not in the indexed database, so an authoritative specification cannot be provided.' Never guess torque values or document part numbers.",
+          "CRITICAL NEGATIVE CONSTRAINT: When a requested third-party component (e.g., MaxxFan, specific aftermarket appliance) is NOT found in the indexed manuals: 1) State clearly that the component manual is not in the database. 2) Provide ONLY vehicle-side OEM chassis constraints (e.g., roof bow clearance, sealant requirements). 3) DO NOT attempt to provide 'widely published', 'typical', or general specifications for the missing component (especially torque, screw sizes, or cut-out tolerances). 4) Explicitly state: 'Consult the manufacturer\'s manual for torque and cut-out specifications, as no official torque value is provided in vehicle documentation.'",
       };
 
       const payload = {
@@ -372,7 +376,7 @@ IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
           ...(results.length === 0
             ? {
                 advice:
-                  "No matching documentation found in the current database for this query. Advise the user to consult the physical manufacturer manual and do not guess fastener or dimensional specs.",
+                  "No matching documentation found in the current database for this query. Advise the user to consult the physical manufacturer manual and do not guess fastener or dimensional specs. When a third-party component is not found, provide ONLY vehicle-side OEM constraints and explicitly state: 'Consult the manufacturer\'s manual for torque and cut-out specifications, as no official torque value is provided in vehicle documentation.'",
               }
             : {}),
         },
@@ -562,12 +566,12 @@ export async function searchVanManuals(
     strict_grounding_rule:
       "Only provide specifications, dimensions, or torque values if explicitly contained in the retrieved manual chunks below.",
     missing_manual_rule:
-      "If the specific manual, model, or component requested by the user is not present in the returned chunks, explicitly state: 'The specific manual for [component/system] is not in the indexed database, so an authoritative specification cannot be provided.' Never guess torque values or document part numbers.",
+      "CRITICAL NEGATIVE CONSTRAINT: When a requested third-party component (e.g., MaxxFan, specific aftermarket appliance) is NOT found in the indexed manuals: 1) State clearly that the component manual is not in the database. 2) Provide ONLY vehicle-side OEM chassis constraints (e.g., roof bow clearance, sealant requirements). 3) DO NOT attempt to provide 'widely published', 'typical', or general specifications for the missing component (especially torque, screw sizes, or cut-out tolerances). 4) Explicitly state: 'Consult the manufacturer\'s manual for torque and cut-out specifications, as no official torque value is provided in vehicle documentation.'",
   };
 
   if (!matchesFound) {
     baseContract.no_matches_guidance =
-      "No matching documentation found in the current database for this query. Advise the user to consult the physical manufacturer manual and do not guess fastener or dimensional specs.";
+      "No matching documentation found in the current database for this query. Advise the user to consult the physical manufacturer manual and do not guess fastener or dimensional specs. When a third-party component is not found, provide ONLY vehicle-side OEM constraints and explicitly state: 'Consult the manufacturer\'s manual for torque and cut-out specifications, as no official torque value is provided in vehicle documentation.'";
 
     return {
       retrieval_metadata: {
@@ -577,7 +581,7 @@ export async function searchVanManuals(
         filter_applied: filterOptions,
         retrieval_contract: baseContract,
         advice:
-          "No matching documentation found in the current database for this query. Advise the user to consult the physical manufacturer manual and do not guess fastener or dimensional specs.",
+          "No matching documentation found in the current database for this query. Advise the user to consult the physical manufacturer manual and do not guess fastener or dimensional specs. When a third-party component is not found, provide ONLY vehicle-side OEM constraints and explicitly state: 'Consult the manufacturer\'s manual for torque and cut-out specifications, as no official torque value is provided in vehicle documentation.'",
       },
       results: [],
     };
