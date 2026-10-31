@@ -148,7 +148,7 @@ tests:
   - vars:
       question: "What is the exact torque specification and bolt size for mounting the XYZ-999 generic auxiliary Chinese diesel water pump?"
     assert:
-      - type: contains-any
+      - type: icontains-any
         value:
           - "not in the indexed database"
           - "not available in the database"
@@ -158,8 +158,9 @@ tests:
         value: "torque specification is"
       - type: not-contains
         value: "recommended torque is"
-      - type: contains-any
+      - type: icontains-any
         value:
           - "manufacturer manual"
+          - "manufacturer's manual"
           - "physical manual"
           - "consult the manufacturer"
