@@ -150,17 +150,25 @@ tests:
     assert:
       - type: icontains-any
         value:
-          - "not in the indexed database"
-          - "not available in the database"
-          - "not found in the database"
-          - "no matching documentation"
+          - "database"
+          - "not in"
+          - "not available"
+          - "no manual"
+          - "no published"
+          - "neither covers"
+          - "cannot be provided"
       - type: not-contains
         value: "torque specification is"
       - type: not-contains
         value: "recommended torque is"
       - type: icontains-any
         value:
-          - "manufacturer manual"
-          - "manufacturer's manual"
-          - "physical manual"
-          - "consult the manufacturer"
+          - "manual"
+          - "documentation"
+          - "datasheet"
+          - "spec"
+      - type: llm-rubric
+        threshold: 0.85
+        value: |
+          The model must refuse to provide a fabricated torque specification or bolt size for the untraceable component XYZ-999. It must explain that the product is generic/untraceable or not in the indexed manuals, and recommend verifying real manufacturer documentation or measuring the fastener directly.
+          
