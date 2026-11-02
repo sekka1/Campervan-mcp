@@ -30,6 +30,13 @@ describe("calculateSolarStringMppt", () => {
     expect(r.total_isc_amps).toBe(28.5);
     expect(r.mppt_current_ok).toBe(false);
   });
+
+  it("rejects non-positive panel counts", () => {
+    expect(() => calculateSolarStringMppt({ ...base, series_count: 0 })).toThrow("series_count must be a positive integer");
+    expect(() => calculateSolarStringMppt({ ...base, series_count: 1, parallel_strings: 0 })).toThrow(
+      "parallel_strings must be a positive integer"
+    );
+  });
 });
 
 describe("calculateBatteryRuntime", () => {
@@ -57,6 +64,15 @@ describe("calculateBatteryRuntime", () => {
 
   it("rejects zero load", () => {
     expect(() => calculateBatteryRuntime({ battery_voltage: 12, capacity_ah: 100, chemistry: "agm" })).toThrow();
+  });
+
+  it("rejects invalid runtime parameters", () => {
+    const base = { battery_voltage: 12, capacity_ah: 100, chemistry: "agm" as const, dc_load_watts: 60 };
+    expect(() => calculateBatteryRuntime({ ...base, usable_fraction: 1.1 })).toThrow("usable_fraction must be between 0 (exclusive) and 1");
+    expect(() => calculateBatteryRuntime({ ...base, inverter_efficiency: 1.1 })).toThrow(
+      "inverter_efficiency must be between 0 (exclusive) and 1"
+    );
+    expect(() => calculateBatteryRuntime({ ...base, ac_duty_cycle: 1.1 })).toThrow("duty cycles must be between 0 and 1");
   });
 });
 
