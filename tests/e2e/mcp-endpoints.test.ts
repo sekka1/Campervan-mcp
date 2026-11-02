@@ -45,7 +45,7 @@ describe("E2E: Lean Campervan MCP Server Endpoints", () => {
     passThroughOnException: vi.fn(),
   } as unknown as ExecutionContext;
 
-  it("tools/list returns strictly the 3 lean tools", async () => {
+  it("tools/list returns strictly the 5 lean tools", async () => {
     const req = new Request("http://localhost/", {
       method: "POST",
       headers: {
@@ -70,8 +70,9 @@ describe("E2E: Lean Campervan MCP Server Endpoints", () => {
     // Strictly expect only the lean tools
     expect(toolNames).toContain("calculate_dc_wire_and_fuse");
     expect(toolNames).toContain("search_van_manuals");
-    expect(toolNames).toContain("inspect_manual_chunks");
-    expect(toolNames).toHaveLength(3);
+    expect(toolNames).toContain("calculate_solar_string_mppt");
+    expect(toolNames).toContain("calculate_battery_runtime");
+    expect(toolNames).toHaveLength(5);
 
     // Verify deprecated hardcoded tools are NOT registered
     expect(toolNames).not.toContain("chassis_rules");

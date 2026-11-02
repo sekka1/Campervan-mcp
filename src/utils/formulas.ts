@@ -486,3 +486,130 @@ export function validateSolarArray(
 }
 
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Solar String / MPPT Sizing
+// ---------------------------------------------------------------------------
+
+export interface SolarStringMpptParams {
+  panel_voc: number;
+  panel_isc: number;
+  voc_temp_coeff_pct_per_c: number;
+  coldest_ambient_c: number;
+  series_count: number;
+  parallel_strings?: number;
+  mppt_max_input_voltage: number;
+  mppt_max_input_current_amps?: number;
+  panel_watts?: number;
+}
+
+export interface SolarStringMpptResult extends SolarArrayResult {
+  max_series_panels: number;
+  max_series_panels_note: string;
+}
+
+/**
+ * Verifies a solar string against an MPPT controller's maximum input voltage,
+ * using the panel Voc temperature coefficient at the coldest expected ambient.
+ */
+export function calculateSolarStringMppt(params: SolarStringMpptParams): SolarStringMpptResult {
+  const parallel = params.parallel_strings ?? 1;
+  if (!Number.isInteger(params.series_count) || params.series_count < 1) {
+    throw new Error("series_count must be a positive integer");
+  }
+  if (!Number.isInteger(parallel) || parallel < 1) {
+    throw new Error("parallel_strings must be a positive integer");
+  }
+  const result = validateSolarArray(
+    {
+      watts: params.panel_watts ?? 0,
+      voc_stc: params.panel_voc,
+      isc_amps: params.panel_isc,
+      voc_temp_coeff_pct_per_c: params.voc_temp_coeff_pct_per_c,
+    },
+    params.series_count,
+    parallel,
+    {
+      max_input_voltage: params.mppt_max_input_voltage,
+      mppt_voltage_min: 0,
+      mppt_voltage_max: params.mppt_max_input_voltage,
+      max_input_current_amps: params.mppt_max_input_current_amps ?? Number.POSITIVE_INFINITY,
+    },
+    params.coldest_ambient_c
+  );
+
+  const coldVocPerPanel = result.cold_weather_voc_volts / params.series_count;
+  const maxSeries = Math.max(0, Math.floor(params.mppt_max_input_voltage / coldVocPerPanel));
+
+  return {
+    ...result,
+    max_series_panels: maxSeries,
+    max_series_panels_note: `Maximum panels in series at ${params.coldest_ambient_c}°C: ${maxSeries} (cold Voc per panel ${coldVocPerPanel.toFixed(2)}V)`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Battery Runtime
+// ---------------------------------------------------------------------------
+
+export const BATTERY_USABLE_DOD: Record<string, number> = {
+  lifepo4: 0.9,
+  lithium: 0.8,
+  agm: 0.5,
+  lead_acid: 0.5,
+};
+
+export interface BatteryRuntimeParams {
+  battery_voltage: number;
+  capacity_ah: number;
+  chemistry: "lifepo4" | "lithium" | "agm" | "lead_acid";
+  usable_fraction?: number;
+  inverter_idle_watts?: number;
+  inverter_efficiency?: number;
+  ac_load_watts?: number;
+  ac_duty_cycle?: number;
+  dc_load_watts?: number;
+  dc_duty_cycle?: number;
+}
+
+export interface BatteryRuntimeResult {
+  usable_capacity_wh: number;
+  average_draw_watts: number;
+  average_draw_amps: number;
+  runtime_hours: number;
+  breakdown_watts: { inverter_idle: number; ac_loads_at_battery: number; dc_loads: number };
+}
+
+/**
+ * Estimates battery runtime in hours from usable capacity and duty-cycled loads.
+ * Inverter idle draw is treated as continuous; AC loads are divided by inverter efficiency.
+ */
+export function calculateBatteryRuntime(params: BatteryRuntimeParams): BatteryRuntimeResult {
+  const usableFraction = params.usable_fraction ?? BATTERY_USABLE_DOD[params.chemistry];
+  if (usableFraction === undefined || usableFraction <= 0 || usableFraction > 1) {
+    throw new Error("usable_fraction must be between 0 (exclusive) and 1");
+  }
+  const eff = params.inverter_efficiency ?? 0.9;
+  if (eff <= 0 || eff > 1) throw new Error("inverter_efficiency must be between 0 (exclusive) and 1");
+  const acDuty = params.ac_duty_cycle ?? 1;
+  const dcDuty = params.dc_duty_cycle ?? 1;
+  if (acDuty < 0 || acDuty > 1 || dcDuty < 0 || dcDuty > 1) {
+    throw new Error("duty cycles must be between 0 and 1");
+  }
+
+  const usableWh = params.battery_voltage * params.capacity_ah * usableFraction;
+  const idle = params.inverter_idle_watts ?? 0;
+  const ac = ((params.ac_load_watts ?? 0) * acDuty) / eff;
+  const dc = (params.dc_load_watts ?? 0) * dcDuty;
+  const avg = idle + ac + dc;
+  if (avg <= 0) throw new Error("Total average load must be greater than zero");
+
+  const round = (n: number) => Math.round(n * 100) / 100;
+  return {
+    usable_capacity_wh: round(usableWh),
+    average_draw_watts: round(avg),
+    average_draw_amps: round(avg / params.battery_voltage),
+    runtime_hours: round(usableWh / avg),
+    breakdown_watts: { inverter_idle: round(idle), ac_loads_at_battery: round(ac), dc_loads: round(dc) },
+  };
+}

@@ -11,7 +11,7 @@ import {
   isMeteringAllowAll,
   type MeteredToolCall,
 } from "./utils/metering.js";
-import { calculateDCWireAndFuse, WireCalculationParams, WireCalculationResult } from "./utils/formulas.js";
+import { calculateBatteryRuntime, calculateDCWireAndFuse, calculateSolarStringMppt, WireCalculationParams, WireCalculationResult } from "./utils/formulas.js";
 
 export { calculateDCWireAndFuse as calculateDcWireAndFuse, calculateDCWireAndFuse };
 export { searchVanManuals };
@@ -64,6 +64,47 @@ IMPORTANT SAFETY INSTRUCTIONS FOR LLM CONSUMERS:
         },
       },
       required: ["system_voltage", "amperage", "one_way_distance_feet"],
+    },
+  },
+  {
+    name: "calculate_solar_string_mppt",
+    description:
+      "Verifies a solar string does not exceed an MPPT controller's max input voltage/current at the coldest expected ambient temperature, using the panel Voc temperature coefficient. Returns cold Voc, safety flags, and the maximum series panel count.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        panel_voc: { type: "number", description: "Panel open-circuit voltage at STC in volts" },
+        panel_isc: { type: "number", description: "Panel short-circuit current in amps" },
+        voc_temp_coeff_pct_per_c: { type: "number", description: "Voc temperature coefficient in %/°C (negative, e.g. -0.29)" },
+        coldest_ambient_c: { type: "number", description: "Coldest expected ambient temperature in °C" },
+        series_count: { type: "number", description: "Panels in series per string" },
+        parallel_strings: { type: "number", description: "Number of parallel strings (default 1)" },
+        mppt_max_input_voltage: { type: "number", description: "MPPT absolute max input voltage in volts" },
+        mppt_max_input_current_amps: { type: "number", description: "MPPT max input current in amps" },
+        panel_watts: { type: "number", description: "Panel rated watts (for total array power)" },
+      },
+      required: ["panel_voc", "panel_isc", "voc_temp_coeff_pct_per_c", "coldest_ambient_c", "series_count", "mppt_max_input_voltage"],
+    },
+  },
+  {
+    name: "calculate_battery_runtime",
+    description:
+      "Estimates battery runtime in hours from chemistry/usable capacity, inverter idle consumption, and AC/DC loads with duty cycles.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        battery_voltage: { type: "number", description: "Battery nominal voltage in volts" },
+        capacity_ah: { type: "number", description: "Battery capacity in amp-hours" },
+        chemistry: { type: "string", enum: ["lifepo4", "lithium", "agm", "lead_acid"], description: "Battery chemistry (sets default usable fraction)" },
+        usable_fraction: { type: "number", description: "Override usable capacity fraction (0-1)" },
+        inverter_idle_watts: { type: "number", description: "Inverter idle consumption in watts" },
+        inverter_efficiency: { type: "number", description: "Inverter efficiency (0-1, default 0.9)" },
+        ac_load_watts: { type: "number", description: "AC load power in watts" },
+        ac_duty_cycle: { type: "number", description: "Fraction of time AC load runs (0-1)" },
+        dc_load_watts: { type: "number", description: "DC load power in watts" },
+        dc_duty_cycle: { type: "number", description: "Fraction of time DC load runs (0-1)" },
+      },
+      required: ["battery_voltage", "capacity_ah", "chemistry"],
     },
   },
   {
@@ -172,6 +213,29 @@ export async function handleMcpRequest(
             code: -32602,
             message: err instanceof Error ? err.message : "Invalid wire calculation parameters",
           },
+        };
+      }
+    }
+
+    if (name === "calculate_solar_string_mppt" || name === "calculate_battery_runtime") {
+      try {
+        const result =
+          name === "calculate_solar_string_mppt"
+            ? calculateSolarStringMppt(args as unknown as Parameters<typeof calculateSolarStringMppt>[0])
+            : calculateBatteryRuntime(args as unknown as Parameters<typeof calculateBatteryRuntime>[0]);
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+            structured: result as unknown as Record<string, unknown>,
+          },
+        };
+      } catch (err) {
+        return {
+          jsonrpc: "2.0",
+          id,
+          error: { code: -32602, message: err instanceof Error ? err.message : "Invalid parameters" },
         };
       }
     }

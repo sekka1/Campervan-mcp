@@ -136,7 +136,7 @@ describe("Dynamic Retrieval Grounding Contract & Manuals MCP Tools", () => {
 
       expect(res.jsonrpc).toBe("2.0");
       expect(res.id).toBe(1);
-      expect(res.result?.tools).toHaveLength(2);
+      expect(res.result?.tools).toHaveLength(4);
       const tools = (res.result?.tools as Array<{ name: string }>) || [];
       expect(tools.map((t) => t.name)).toContain("calculate_dc_wire_and_fuse");
       expect(tools.map((t) => t.name)).toContain("search_van_manuals");

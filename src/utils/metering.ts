@@ -25,6 +25,8 @@ export const TOOL_COSTS_MICROCENTS: Record<string, number> = {
 
   // Universal Electrical Math ($0.000500)
   calculate_dc_wire_and_fuse: DETERMINISTIC_TOOL_COST_MICROCENTS,
+  calculate_solar_string_mppt: DETERMINISTIC_TOOL_COST_MICROCENTS,
+  calculate_battery_runtime: DETERMINISTIC_TOOL_COST_MICROCENTS,
 };
 
 /**

@@ -1,6 +1,37 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { calculateDCWireAndFuse } from "../utils/formulas.js";
+import { calculateBatteryRuntime, calculateDCWireAndFuse, calculateSolarStringMppt } from "../utils/formulas.js";
+
+export const solarStringShape = {
+  panel_voc: z.number().positive().describe("Panel open-circuit voltage at STC in volts"),
+  panel_isc: z.number().positive().describe("Panel short-circuit current in amps"),
+  voc_temp_coeff_pct_per_c: z
+    .number()
+    .describe("Voc temperature coefficient in %/°C (negative, e.g. -0.29)"),
+  coldest_ambient_c: z.number().describe("Coldest expected ambient temperature in °C"),
+  series_count: z.number().int().positive().describe("Panels in series per string"),
+  parallel_strings: z.number().int().positive().default(1).describe("Number of parallel strings (default 1)"),
+  mppt_max_input_voltage: z.number().positive().describe("MPPT absolute max input voltage in volts"),
+  mppt_max_input_current_amps: z.number().positive().optional().describe("MPPT max input current in amps"),
+  panel_watts: z.number().nonnegative().optional().describe("Panel rated watts (for total array power)"),
+};
+
+export const batteryRuntimeShape = {
+  battery_voltage: z.number().positive().describe("Battery nominal voltage in volts"),
+  capacity_ah: z.number().positive().describe("Battery capacity in amp-hours"),
+  chemistry: z.enum(["lifepo4", "lithium", "agm", "lead_acid"]).describe("Battery chemistry (sets default usable fraction)"),
+  usable_fraction: z.number().gt(0).max(1).optional().describe("Override usable capacity fraction (0-1)"),
+  inverter_idle_watts: z.number().nonnegative().default(0).describe("Inverter idle consumption in watts"),
+  inverter_efficiency: z.number().gt(0).max(1).default(0.9).describe("Inverter efficiency (0-1, default 0.9)"),
+  ac_load_watts: z.number().nonnegative().default(0).describe("AC load power in watts"),
+  ac_duty_cycle: z.number().min(0).max(1).default(1).describe("Fraction of time AC load runs (0-1)"),
+  dc_load_watts: z.number().nonnegative().default(0).describe("DC load power in watts"),
+  dc_duty_cycle: z.number().min(0).max(1).default(1).describe("Fraction of time DC load runs (0-1)"),
+};
+
+function textResult(result: unknown) {
+  return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+}
 
 export function registerElectricalTools(mcp: McpServer): void {
   // -------------------------------------------------------------------------
@@ -61,5 +92,25 @@ IMPORTANT SAFETY INSTRUCTIONS FOR LLM CONSUMERS:
         ],
       };
     }
+  );
+
+  mcp.registerTool(
+    "calculate_solar_string_mppt",
+    {
+      description:
+        "Verifies a solar string does not exceed an MPPT controller's max input voltage/current at the coldest expected ambient temperature, using the panel Voc temperature coefficient. Returns cold Voc, safety flags, and the maximum series panel count.",
+      inputSchema: solarStringShape,
+    },
+    async (args) => textResult(calculateSolarStringMppt(args))
+  );
+
+  mcp.registerTool(
+    "calculate_battery_runtime",
+    {
+      description:
+        "Estimates battery runtime in hours from chemistry/usable capacity, inverter idle consumption, and AC/DC loads with duty cycles.",
+      inputSchema: batteryRuntimeShape,
+    },
+    async (args) => textResult(calculateBatteryRuntime(args))
   );
 }
