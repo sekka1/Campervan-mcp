@@ -227,7 +227,7 @@ describe("Promptfoo MCP Provider (2-Turn Tool Loop & Transport Compatibility)", 
 
     // Test 2: Roof cut-out & torque anti-hallucination checks
     expect(yaml).toContain("35 in-lbs");
-    expect(yaml).toContain("14\"");
+    expect(yaml).toContain("14x14 inch");
 
     // Test 3: CCP location & rating assertions
     expect(yaml).toContain("60A");
