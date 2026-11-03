@@ -784,6 +784,7 @@ export interface HybridSearchResult {
   market?: string;
   model_year?: number;
   metadata_json?: string;
+  fuel_type?: "bev" | "ice";
 }
 
 /** Joins the CDN base URL and an R2 key into a public image URL. */
@@ -935,6 +936,13 @@ export async function hybridSearch(
 
     const sourceName = canonicalTitle || (m.metadata.source && m.metadata.source !== "unknown" ? m.metadata.source : h.document_title);
 
+    const rawFuelType = extractChunkFuelType({
+      metadata_json: h.metadata_json,
+      document_title: h.document_title,
+      source: m.metadata.source,
+      chunk_text: h.chunk_text,
+    });
+
     return {
       id: m.id,
       score: m.score,
@@ -951,6 +959,7 @@ export async function hybridSearch(
       market: h.market ?? undefined,
       model_year: modelYear,
       metadata_json: h.metadata_json ?? undefined,
+      ...(rawFuelType ? { fuel_type: rawFuelType } : {}),
       ...(h.schematic_r2_key ? { schematic_r2_key: h.schematic_r2_key } : {}),
       ...(h.schematic_r2_key && options.cdnBaseUrl
         ? (() => {
@@ -996,18 +1005,29 @@ export async function hybridSearch(
       }
     }
 
-    // Unless the user explicitly requested BEV, prioritize ICE / non-BEV chunks
+    // Powertrain bias:
+    // If not a BEV query, prioritize ICE / neutral chunks ahead of BEV chunks.
+    // If an explicit BEV query, prioritize BEV chunks.
+    const aFuel = a.fuel_type || extractChunkFuelType(a);
+    const bFuel = b.fuel_type || extractChunkFuelType(b);
     if (!isBevQuery) {
-      const aFuel = extractChunkFuelType(a);
-      const bFuel = extractChunkFuelType(b);
       const aIsIce = aFuel !== "bev" ? 1 : 0;
       const bIsIce = bFuel !== "bev" ? 1 : 0;
       if (aIsIce !== bIsIce) {
         return bIsIce - aIsIce;
       }
+    } else {
+      const aIsBev = aFuel === "bev" ? 1 : 0;
+      const bIsBev = bFuel === "bev" ? 1 : 0;
+      if (aIsBev !== bIsBev) {
+        return bIsBev - aIsBev;
+      }
     }
 
-    return b.score - a.score;
+    if (options.model || defaultMarketPreference === "us") {
+      return b.score - a.score;
+    }
+    return 0;
   });
 
   return mappedResults.slice(0, options.topK ?? 8);

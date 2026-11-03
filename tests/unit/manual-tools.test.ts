@@ -110,7 +110,7 @@ describe("Dynamic Retrieval Grounding Contract & Manuals MCP Tools", () => {
       expect(contract.strict_grounding_rule).toContain(
         "Only provide specifications, dimensions, or torque values if explicitly contained"
       );
-      expect(contract.powertrain_rule).toContain("DEFAULT TO ICE");
+      expect(contract.powertrain_rule).toContain("POWERTRAIN AWARENESS");
       expect(contract.options_enumeration_rule).toContain("BROAD QUERY ENUMERATION");
       expect(contract.schematic_rule).toContain("MANDATORY DIAGRAMS");
     });
@@ -133,7 +133,7 @@ describe("Dynamic Retrieval Grounding Contract & Manuals MCP Tools", () => {
 
       const desc = manualTool!.description;
       expect(desc).toContain("Adhere strictly to the returned 'retrieval_contract'.");
-      expect(desc).toContain("DEFAULT TO ICE");
+      expect(desc).toContain("POWERTRAIN AWARENESS");
       expect(desc).toContain("BROAD QUERY ENUMERATION");
       expect(desc).toContain("MANDATORY DIAGRAMS");
       expect(desc).toContain("CRITICAL NEGATIVE CONSTRAINT");

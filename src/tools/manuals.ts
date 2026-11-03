@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { hybridSearch } from "../utils/db.js";
+import { hybridSearch, queryContainsBevIndicators, extractChunkFuelType } from "../utils/db.js";
 
 export interface Env {
   DB?: {
@@ -282,7 +282,7 @@ export function registerManualTools(
         `Searches indexed technical documentation, OEM body builder manuals (BEMM), and component guides.
 IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
 - Adhere strictly to the returned 'retrieval_contract'.
-- DEFAULT TO ICE: Assume ICE (gas/diesel) powertrain by default; deliver complete ICE specs first and do not stall asking for powertrain clarification.
+- POWERTRAIN AWARENESS: Default to ICE (gas/diesel) specifications first without stalling to ask for clarification, unless an electric/BEV configuration is explicitly requested.
 - BROAD QUERY ENUMERATION: When an inquiry is open-ended (e.g., connection points, mounting zones), output a structured, complete inventory of all documented options using compact tables or categorized lists with key parameters.
 - MANDATORY DIAGRAMS: Whenever a chunk contains a 'schematic_url', embed it inline in markdown: ![<Diagram Title>](<schematic_url>).
 - CRITICAL NEGATIVE CONSTRAINT: When a requested third-party component (e.g., MaxxFan, specific aftermarket appliance) is NOT found in the indexed manuals:
@@ -373,7 +373,7 @@ IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
         missing_manual_rule:
           "CRITICAL NEGATIVE CONSTRAINT: When a requested third-party component (e.g., MaxxFan, specific aftermarket appliance) is NOT found in the indexed manuals: 1) State clearly that the component manual is not in the database. 2) Provide ONLY vehicle-side OEM chassis constraints (e.g., roof bow clearance, sealant requirements). 3) DO NOT attempt to provide 'widely published', 'typical', or general specifications for the missing component (especially torque, screw sizes, or cut-out tolerances). 4) Explicitly state: 'Consult the manufacturer\'s manual for torque and cut-out specifications, as no official torque value is provided in vehicle documentation.'",
         powertrain_rule:
-          "DEFAULT TO ICE: Assume the vehicle has an Internal Combustion Engine (gas/diesel) by default. Deliver complete ICE specifications first. Do not stall or gate the response asking the user to clarify their powertrain. Only append a brief BEV/electric section at the end if explicitly relevant chunks exist.",
+          "POWERTRAIN AWARENESS: Unless the user explicitly requests an electric or BEV configuration (e.g., E-Transit, eSprinter, EV), default to Internal Combustion Engine (ICE, gas/diesel) specifications. Deliver complete ICE specifications first without gating or stalling to ask for clarification. When an electric/BEV configuration IS explicitly requested, prioritize the electric chassis specifications immediately.",
         options_enumeration_rule:
           "BROAD QUERY ENUMERATION: When an inquiry is open-ended or lacks specific layout context (e.g., available mounting zones, tap-in locations, connection points, or hardware ratings), DO NOT cherry-pick a single preferred option or collapse possibilities into vague summaries. Present a structured, complete inventory of all documented options from the retrieved chunks using compact tables or categorized lists with their key differentiating parameters (location, capacity/rating, restrictions). Give the user the full menu of what is physically and authoritatively possible so they can narrow down their specific configuration.",
         schematic_rule:
@@ -529,7 +529,7 @@ export async function executeVectorSearch(
       const placeholders = chunkIds.map(() => "?").join(",");
       let sql = `
         SELECT c.id, c.document_id, c.page_number, c.subsystem, c.chunk_text,
-               d.title, d.manufacturer, s.r2_key, s.caption
+               d.title, d.manufacturer, d.metadata_json, s.r2_key, s.caption
         FROM document_chunks c
         JOIN documents d ON c.document_id = d.id
         LEFT JOIN schematic_images s ON c.schematic_image_id = s.id
@@ -544,10 +544,17 @@ export async function executeVectorSearch(
 
       const rows = await db.prepare(sql).bind(...binds).all();
       const cdnUrl = env?.CDN_BASE_URL || "https://assets.campervan-mcp.internal";
+      const isBevQuery = queryContainsBevIndicators(query);
 
-      return ((rows?.results as Record<string, unknown>[]) || []).map((row) => {
+      const items = ((rows?.results as Record<string, unknown>[]) || []).map((row) => {
         const schematicUrl = row.r2_key ? `${cdnUrl}/${row.r2_key}` : undefined;
         const captionOrTitle = row.caption ? String(row.caption) : String(row.title || "OEM Diagram");
+        const fuelType = extractChunkFuelType({
+          metadata_json: row.metadata_json ? String(row.metadata_json) : null,
+          document_title: row.title ? String(row.title) : null,
+          chunk_text: row.chunk_text ? String(row.chunk_text) : null,
+        });
+
         return {
           id: String(row.id),
           document_id: String(row.document_id),
@@ -560,8 +567,25 @@ export async function executeVectorSearch(
           schematic_url: schematicUrl,
           schematic_caption: row.caption ? String(row.caption) : undefined,
           schematic_markdown: schematicUrl ? `![${captionOrTitle}](${schematicUrl})` : undefined,
+          fuel_type: fuelType,
         };
       });
+
+      // Apply fuel-aware prioritization: ICE-first unless explicit BEV query
+      items.sort((a, b) => {
+        if (!isBevQuery) {
+          const aIsIce = a.fuel_type !== "bev" ? 1 : 0;
+          const bIsIce = b.fuel_type !== "bev" ? 1 : 0;
+          if (aIsIce !== bIsIce) return bIsIce - aIsIce;
+        } else {
+          const aIsBev = a.fuel_type === "bev" ? 1 : 0;
+          const bIsBev = b.fuel_type === "bev" ? 1 : 0;
+          if (aIsBev !== bIsBev) return bIsBev - aIsBev;
+        }
+        return 0;
+      });
+
+      return items;
     } catch (err) {
       console.error("[search_van_manuals] Search error:", err);
       return [];
@@ -588,7 +612,7 @@ export async function searchVanManuals(
     missing_manual_rule:
       "CRITICAL NEGATIVE CONSTRAINT: When a requested third-party component (e.g., MaxxFan, specific aftermarket appliance) is NOT found in the indexed manuals: 1) State clearly that the component manual is not in the database. 2) Provide ONLY vehicle-side OEM chassis constraints (e.g., roof bow clearance, sealant requirements). 3) DO NOT attempt to provide 'widely published', 'typical', or general specifications for the missing component (especially torque, screw sizes, or cut-out tolerances). 4) Explicitly state: 'Consult the manufacturer\'s manual for torque and cut-out specifications, as no official torque value is provided in vehicle documentation.'",
     powertrain_rule:
-      "DEFAULT TO ICE: Assume the vehicle has an Internal Combustion Engine (gas/diesel) by default. Deliver complete ICE specifications first. Do not stall or gate the response asking the user to clarify their powertrain. Only append a brief BEV/electric section at the end if explicitly relevant chunks exist.",
+      "POWERTRAIN AWARENESS: Unless the user explicitly requests an electric or BEV configuration (e.g., E-Transit, eSprinter, EV), default to Internal Combustion Engine (ICE, gas/diesel) specifications. Deliver complete ICE specifications first without gating or stalling to ask for clarification. When an electric/BEV configuration IS explicitly requested, prioritize the electric chassis specifications immediately.",
     options_enumeration_rule:
       "BROAD QUERY ENUMERATION: When an inquiry is open-ended or lacks specific layout context (e.g., available mounting zones, tap-in locations, connection points, or hardware ratings), DO NOT cherry-pick a single preferred option or collapse possibilities into vague summaries. Present a structured, complete inventory of all documented options from the retrieved chunks using compact tables or categorized lists with their key differentiating parameters (location, capacity/rating, restrictions). Give the user the full menu of what is physically and authoritatively possible so they can narrow down their specific configuration.",
     schematic_rule:
