@@ -71,6 +71,9 @@ IMPORTANT SAFETY INSTRUCTIONS FOR LLM CONSUMERS:
     description: `Searches indexed technical documentation, OEM body builder manuals (BEMM), and component guides.
 IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
 - Adhere strictly to the returned 'retrieval_contract'.
+- DEFAULT TO ICE: Assume ICE (gas/diesel) powertrain by default; deliver complete ICE specs first and do not stall asking for powertrain clarification.
+- BROAD QUERY ENUMERATION: When an inquiry is open-ended (e.g., connection points, mounting zones), output a structured, complete inventory of all documented options using compact tables or categorized lists with key parameters.
+- MANDATORY DIAGRAMS: Whenever a chunk contains a 'schematic_url', embed it inline in markdown: ![<Diagram Title>](<schematic_url>).
 - CRITICAL NEGATIVE CONSTRAINT: When a requested third-party component (e.g., MaxxFan, specific aftermarket appliance) is NOT found in the indexed manuals:
   1. State clearly that the component manual is not in the database.
   2. Provide ONLY vehicle-side OEM chassis constraints (e.g., roof bow clearance, sealant requirements).

@@ -36,7 +36,9 @@ export interface ManualChunkResult {
   chunk_text: string;
   score?: number;
   schematic_image_url?: string;
+  schematic_url?: string;
   schematic_caption?: string;
+  schematic_markdown?: string;
 }
 
 export const SubsystemEnum = z.enum([
@@ -120,6 +122,9 @@ export interface SearchFilterOptions {
 export interface RetrievalContract {
   strict_grounding_rule: string;
   missing_manual_rule: string;
+  powertrain_rule: string;
+  options_enumeration_rule: string;
+  schematic_rule: string;
   no_matches_guidance?: string;
 }
 
@@ -277,6 +282,9 @@ export function registerManualTools(
         `Searches indexed technical documentation, OEM body builder manuals (BEMM), and component guides.
 IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
 - Adhere strictly to the returned 'retrieval_contract'.
+- DEFAULT TO ICE: Assume ICE (gas/diesel) powertrain by default; deliver complete ICE specs first and do not stall asking for powertrain clarification.
+- BROAD QUERY ENUMERATION: When an inquiry is open-ended (e.g., connection points, mounting zones), output a structured, complete inventory of all documented options using compact tables or categorized lists with key parameters.
+- MANDATORY DIAGRAMS: Whenever a chunk contains a 'schematic_url', embed it inline in markdown: ![<Diagram Title>](<schematic_url>).
 - CRITICAL NEGATIVE CONSTRAINT: When a requested third-party component (e.g., MaxxFan, specific aftermarket appliance) is NOT found in the indexed manuals:
   1. State clearly that the component manual is not in the database.
   2. Provide ONLY vehicle-side OEM chassis constraints (e.g., roof bow clearance, sealant requirements).
@@ -359,11 +367,17 @@ IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
         ...(args.source_filter ? { source: args.source_filter } : {}),
       };
 
-      const retrievalContract = {
+      const retrievalContract: RetrievalContract = {
         strict_grounding_rule:
           "Only provide specifications, dimensions, or torque values if explicitly contained in the retrieved manual chunks below.",
         missing_manual_rule:
           "CRITICAL NEGATIVE CONSTRAINT: When a requested third-party component (e.g., MaxxFan, specific aftermarket appliance) is NOT found in the indexed manuals: 1) State clearly that the component manual is not in the database. 2) Provide ONLY vehicle-side OEM chassis constraints (e.g., roof bow clearance, sealant requirements). 3) DO NOT attempt to provide 'widely published', 'typical', or general specifications for the missing component (especially torque, screw sizes, or cut-out tolerances). 4) Explicitly state: 'Consult the manufacturer\'s manual for torque and cut-out specifications, as no official torque value is provided in vehicle documentation.'",
+        powertrain_rule:
+          "DEFAULT TO ICE: Assume the vehicle has an Internal Combustion Engine (gas/diesel) by default. Deliver complete ICE specifications first. Do not stall or gate the response asking the user to clarify their powertrain. Only append a brief BEV/electric section at the end if explicitly relevant chunks exist.",
+        options_enumeration_rule:
+          "BROAD QUERY ENUMERATION: When an inquiry is open-ended or lacks specific layout context (e.g., available mounting zones, tap-in locations, connection points, or hardware ratings), DO NOT cherry-pick a single preferred option or collapse possibilities into vague summaries. Present a structured, complete inventory of all documented options from the retrieved chunks using compact tables or categorized lists with their key differentiating parameters (location, capacity/rating, restrictions). Give the user the full menu of what is physically and authoritatively possible so they can narrow down their specific configuration.",
+        schematic_rule:
+          "MANDATORY DIAGRAMS: Whenever a chunk contains a 'schematic_url', you MUST embed it inline in your markdown response using: ![<Diagram Title>](<schematic_url>).",
       };
 
       const payload = {
@@ -531,17 +545,23 @@ export async function executeVectorSearch(
       const rows = await db.prepare(sql).bind(...binds).all();
       const cdnUrl = env?.CDN_BASE_URL || "https://assets.campervan-mcp.internal";
 
-      return ((rows?.results as Record<string, unknown>[]) || []).map((row) => ({
-        id: String(row.id),
-        document_id: String(row.document_id),
-        title: String(row.title),
-        manufacturer: String(row.manufacturer),
-        page_number: Number(row.page_number),
-        subsystem: row.subsystem ? String(row.subsystem) : undefined,
-        chunk_text: String(row.chunk_text),
-        schematic_image_url: row.r2_key ? `${cdnUrl}/${row.r2_key}` : undefined,
-        schematic_caption: row.caption ? String(row.caption) : undefined,
-      }));
+      return ((rows?.results as Record<string, unknown>[]) || []).map((row) => {
+        const schematicUrl = row.r2_key ? `${cdnUrl}/${row.r2_key}` : undefined;
+        const captionOrTitle = row.caption ? String(row.caption) : String(row.title || "OEM Diagram");
+        return {
+          id: String(row.id),
+          document_id: String(row.document_id),
+          title: String(row.title),
+          manufacturer: String(row.manufacturer),
+          page_number: Number(row.page_number),
+          subsystem: row.subsystem ? String(row.subsystem) : undefined,
+          chunk_text: String(row.chunk_text),
+          schematic_image_url: schematicUrl,
+          schematic_url: schematicUrl,
+          schematic_caption: row.caption ? String(row.caption) : undefined,
+          schematic_markdown: schematicUrl ? `![${captionOrTitle}](${schematicUrl})` : undefined,
+        };
+      });
     } catch (err) {
       console.error("[search_van_manuals] Search error:", err);
       return [];
@@ -567,6 +587,12 @@ export async function searchVanManuals(
       "Only provide specifications, dimensions, or torque values if explicitly contained in the retrieved manual chunks below.",
     missing_manual_rule:
       "CRITICAL NEGATIVE CONSTRAINT: When a requested third-party component (e.g., MaxxFan, specific aftermarket appliance) is NOT found in the indexed manuals: 1) State clearly that the component manual is not in the database. 2) Provide ONLY vehicle-side OEM chassis constraints (e.g., roof bow clearance, sealant requirements). 3) DO NOT attempt to provide 'widely published', 'typical', or general specifications for the missing component (especially torque, screw sizes, or cut-out tolerances). 4) Explicitly state: 'Consult the manufacturer\'s manual for torque and cut-out specifications, as no official torque value is provided in vehicle documentation.'",
+    powertrain_rule:
+      "DEFAULT TO ICE: Assume the vehicle has an Internal Combustion Engine (gas/diesel) by default. Deliver complete ICE specifications first. Do not stall or gate the response asking the user to clarify their powertrain. Only append a brief BEV/electric section at the end if explicitly relevant chunks exist.",
+    options_enumeration_rule:
+      "BROAD QUERY ENUMERATION: When an inquiry is open-ended or lacks specific layout context (e.g., available mounting zones, tap-in locations, connection points, or hardware ratings), DO NOT cherry-pick a single preferred option or collapse possibilities into vague summaries. Present a structured, complete inventory of all documented options from the retrieved chunks using compact tables or categorized lists with their key differentiating parameters (location, capacity/rating, restrictions). Give the user the full menu of what is physically and authoritatively possible so they can narrow down their specific configuration.",
+    schematic_rule:
+      "MANDATORY DIAGRAMS: Whenever a chunk contains a 'schematic_url', you MUST embed it inline in your markdown response using: ![<Diagram Title>](<schematic_url>).",
   };
 
   if (!matchesFound) {

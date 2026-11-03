@@ -98,11 +98,21 @@ describe("Dynamic Retrieval Grounding Contract & Manuals MCP Tools", () => {
       expect(chunk.schematic_image_url).toBe(
         "https://assets.campervan-mcp.com/schematics/transit/ccp2_diagram.png"
       );
+      expect(chunk.schematic_url).toBe(
+        "https://assets.campervan-mcp.com/schematics/transit/ccp2_diagram.png"
+      );
+      expect(chunk.schematic_markdown).toBe(
+        "![CCP2 Driver Seat Pedestal Terminal](https://assets.campervan-mcp.com/schematics/transit/ccp2_diagram.png)"
+      );
 
-      // Verify contract remains attached
-      expect(response.retrieval_metadata.retrieval_contract.strict_grounding_rule).toContain(
+      // Verify contract rules attached
+      const contract = response.retrieval_metadata.retrieval_contract;
+      expect(contract.strict_grounding_rule).toContain(
         "Only provide specifications, dimensions, or torque values if explicitly contained"
       );
+      expect(contract.powertrain_rule).toContain("DEFAULT TO ICE");
+      expect(contract.options_enumeration_rule).toContain("BROAD QUERY ENUMERATION");
+      expect(contract.schematic_rule).toContain("MANDATORY DIAGRAMS");
     });
   });
 
@@ -123,6 +133,9 @@ describe("Dynamic Retrieval Grounding Contract & Manuals MCP Tools", () => {
 
       const desc = manualTool!.description;
       expect(desc).toContain("Adhere strictly to the returned 'retrieval_contract'.");
+      expect(desc).toContain("DEFAULT TO ICE");
+      expect(desc).toContain("BROAD QUERY ENUMERATION");
+      expect(desc).toContain("MANDATORY DIAGRAMS");
       expect(desc).toContain("CRITICAL NEGATIVE CONSTRAINT");
       expect(desc).toContain("Provide ONLY vehicle-side OEM chassis constraints");
       expect(desc).toContain("Consult the manufacturer's manual for torque and cut-out specifications");
@@ -238,5 +251,121 @@ describe("Dynamic Retrieval Grounding Contract & Manuals MCP Tools", () => {
       expect(SubsystemSchema.parse(undefined)).toBeUndefined();
     });
   });
+
+  describe("5. Intelligent Powertrain & Fuel Bias (ICE-First Filtering)", () => {
+    it("detects explicit BEV indicator tokens in query", async () => {
+      const { queryContainsBevIndicators } = await import("../../src/utils/db.ts");
+
+      // Generic or ICE queries
+      expect(queryContainsBevIndicators("where are the grounding points for transit")).toBe(false);
+      expect(queryContainsBevIndicators("Ford Transit dual alternator wiring")).toBe(false);
+      expect(queryContainsBevIndicators("Sprinter diesel heater fuel tap")).toBe(false);
+
+      // BEV explicit queries
+      expect(queryContainsBevIndicators("e-transit high voltage battery disconnect")).toBe(true);
+      expect(queryContainsBevIndicators("etransit grounding stud")).toBe(true);
+      expect(queryContainsBevIndicators("Ford Transit BEV conversion guidelines")).toBe(true);
+      expect(queryContainsBevIndicators("Mercedes eSprinter charging port wiring")).toBe(true);
+      expect(queryContainsBevIndicators("electric van auxiliary battery")).toBe(true);
+      expect(queryContainsBevIndicators("EV chassis ground points")).toBe(true);
+    });
+
+    it("prioritizes ICE chunks over BEV chunks for generic queries when both exist", async () => {
+      const { hybridSearch } = await import("../../src/utils/db.ts");
+
+      // Mock Vectorize with 2 chunks: one BEV (E-Transit), one ICE (Transit gas)
+      const mockVectorIndex = {
+        query: async () => ({
+          matches: [
+            { id: "transit_bev_ground_chunk", score: 0.95 },
+            { id: "transit_ice_ground_chunk", score: 0.90 }
+          ]
+        })
+      };
+
+      const mockDb = {
+        prepare: (_sql: string) => ({
+          bind: (..._args: unknown[]) => ({
+            all: async () => {
+              return {
+                results: [
+                  {
+                    id: "transit_bev_ground_chunk",
+                    document_id: "ford_etransit_bemm_2024",
+                    document_title: "Ford E-Transit All-Electric BEMM",
+                    category: "chassis",
+                    manufacturer: "Ford",
+                    applicable_chassis: "transit",
+                    page_number: 110,
+                    section_title: "Ground Points",
+                    subsystem: "12v_dc",
+                    chunk_text: "E-Transit high voltage battery and chassis grounding stud details.",
+                    schematic_r2_key: "schematics/etransit_ground.png",
+                    schematic_caption: "E-Transit Chassis Ground Studs",
+                    model: "transit",
+                    market: "us",
+                    metadata_json: JSON.stringify({ fuel: "bev", year_start: 2024 })
+                  },
+                  {
+                    id: "transit_ice_ground_chunk",
+                    document_id: "ford_transit_bemm_2024",
+                    document_title: "Ford Transit Gas/Diesel BEMM",
+                    category: "chassis",
+                    manufacturer: "Ford",
+                    applicable_chassis: "transit",
+                    page_number: 95,
+                    section_title: "Ground Points",
+                    subsystem: "12v_dc",
+                    chunk_text: "Standard ICE Transit engine bay and floor pan ground points 1-8.",
+                    schematic_r2_key: "schematics/transit_ice_ground.png",
+                    schematic_caption: "Transit ICE Ground Locations",
+                    model: "transit",
+                    market: "us",
+                    metadata_json: JSON.stringify({ fuel: "ice", year_start: 2024 })
+                  }
+                ]
+              };
+            }
+          })
+        })
+      };
+
+      // Query without BEV indicator -> ICE chunk must be prioritized to rank #1
+      const iceFirstResults = await hybridSearch(
+        mockVectorIndex as unknown as Parameters<typeof hybridSearch>[0],
+        mockDb as unknown as Parameters<typeof hybridSearch>[1],
+        Array.from({ length: 768 }, () => 0.05),
+        {
+          topK: 2,
+          queryText: "where are the grounding points for transit",
+          cdnBaseUrl: "https://pub-manuals.r2.dev"
+        }
+      );
+
+      expect(iceFirstResults).toHaveLength(2);
+      expect(iceFirstResults[0].id).toBe("transit_ice_ground_chunk");
+      expect(iceFirstResults[0].schematic_url).toBe("https://pub-manuals.r2.dev/schematics/transit_ice_ground.png");
+      expect(iceFirstResults[0].schematic_markdown).toBe(
+        "![Transit ICE Ground Locations](https://pub-manuals.r2.dev/schematics/transit_ice_ground.png)"
+      );
+      expect(iceFirstResults[1].id).toBe("transit_bev_ground_chunk");
+
+      // Query with BEV indicator -> BEV chunk remains #1 based on raw score
+      const bevResults = await hybridSearch(
+        mockVectorIndex as unknown as Parameters<typeof hybridSearch>[0],
+        mockDb as unknown as Parameters<typeof hybridSearch>[1],
+        Array.from({ length: 768 }, () => 0.05),
+        {
+          topK: 2,
+          queryText: "where are the grounding points for e-transit electric van",
+          cdnBaseUrl: "https://pub-manuals.r2.dev"
+        }
+      );
+
+      expect(bevResults).toHaveLength(2);
+      expect(bevResults[0].id).toBe("transit_bev_ground_chunk");
+    });
+  });
 });
+
 
