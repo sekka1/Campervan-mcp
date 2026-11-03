@@ -125,7 +125,7 @@ describe("E2E Lifecycle Trace: Lean RAG-First Agent Workflow", () => {
       "https://assets.campervan.dev/schematics/doc_transit_bemm/p148-0.png"
     );
     expect(step1Content.results[0].schematic_markdown).toBe(
-      "[CCP2 Connection Layout](https://assets.campervan.dev/schematics/doc_transit_bemm/p148-0.png)"
+      "![CCP2 Connection Layout](https://assets.campervan.dev/schematics/doc_transit_bemm/p148-0.png)"
     );
 
     // -------------------------------------------------------------------------

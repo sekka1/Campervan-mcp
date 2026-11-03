@@ -248,12 +248,76 @@ export function tokenizeQuery(query: string): string[] {
     .replace(/[^a-z0-9_-]/g, " ")
     .split(/\s+/)
     .map((w) => w.trim());
-
   const tokens = words.filter(
     (w) => w.length >= 3 && !ENGLISH_STOP_WORDS.has(w)
   );
 
   return Array.from(new Set(tokens));
+}
+
+/**
+ * Indicators that the user specifically requested an electric/BEV vehicle configuration.
+ */
+export const BEV_INDICATOR_TOKENS: ReadonlyArray<string> = [
+  "bev",
+  "e-transit",
+  "etransit",
+  "electric",
+  "esprinter",
+  "ev",
+  "battery electric",
+];
+
+/**
+ * Checks if the user query contains explicit BEV/electric indicator tokens.
+ */
+export function queryContainsBevIndicators(query?: string): boolean {
+  if (!query) return false;
+  const lower = query.toLowerCase();
+  return BEV_INDICATOR_TOKENS.some((token) => {
+    // If token has non-letters (like hyphen or space), check direct substring
+    if (token.includes("-") || token.includes(" ")) {
+      return lower.includes(token);
+    }
+    // Word boundary check for short tokens like "bev" or "ev"
+    const regex = new RegExp(`\\b${token}\\b`, "i");
+    return regex.test(lower);
+  });
+}
+
+/**
+ * Extracts fuel / powertrain classification from chunk metadata or text.
+ * Returns 'bev' if electric, 'ice' if internal combustion, or undefined if neutral/universal.
+ */
+export function extractChunkFuelType(chunk: {
+  metadata_json?: string | null;
+  document_title?: string | null;
+  chunk_text?: string | null;
+  source?: string | null;
+}): "bev" | "ice" | undefined {
+  if (chunk.metadata_json) {
+    try {
+      const meta = typeof chunk.metadata_json === "string" ? JSON.parse(chunk.metadata_json) : chunk.metadata_json;
+      if (meta?.fuel) {
+        const fuel = String(meta.fuel).toLowerCase().trim();
+        if (fuel === "bev" || fuel === "electric") return "bev";
+        if (fuel === "ice" || fuel === "gas" || fuel === "gasoline" || fuel === "diesel") return "ice";
+      }
+      if (meta?.powertrain) {
+        const pt = String(meta.powertrain).toLowerCase().trim();
+        if (pt === "bev" || pt === "electric") return "bev";
+        if (pt === "ice" || pt === "gas" || pt === "gasoline" || pt === "diesel") return "ice";
+      }
+    } catch {}
+  }
+
+  // Check document title or source name
+  const title = `${chunk.document_title || ""} ${chunk.source || ""}`.toLowerCase();
+  if (title.includes("e-transit") || title.includes("etransit") || title.includes("esprinter") || title.includes("all-electric") || title.includes("battery electric")) {
+    return "bev";
+  }
+
+  return undefined;
 }
 
 /**
@@ -720,6 +784,7 @@ export interface HybridSearchResult {
   market?: string;
   model_year?: number;
   metadata_json?: string;
+  fuel_type?: "bev" | "ice";
 }
 
 /** Joins the CDN base URL and an R2 key into a public image URL. */
@@ -871,6 +936,13 @@ export async function hybridSearch(
 
     const sourceName = canonicalTitle || (m.metadata.source && m.metadata.source !== "unknown" ? m.metadata.source : h.document_title);
 
+    const rawFuelType = extractChunkFuelType({
+      metadata_json: h.metadata_json,
+      document_title: h.document_title,
+      source: m.metadata.source,
+      chunk_text: h.chunk_text,
+    });
+
     return {
       id: m.id,
       score: m.score,
@@ -887,14 +959,16 @@ export async function hybridSearch(
       market: h.market ?? undefined,
       model_year: modelYear,
       metadata_json: h.metadata_json ?? undefined,
+      ...(rawFuelType ? { fuel_type: rawFuelType } : {}),
       ...(h.schematic_r2_key ? { schematic_r2_key: h.schematic_r2_key } : {}),
       ...(h.schematic_r2_key && options.cdnBaseUrl
         ? (() => {
             const url = buildSchematicUrl(options.cdnBaseUrl, h.schematic_r2_key);
             if (!url) return {};
+            const captionOrTitle = h.schematic_caption || canonicalTitle || "OEM Diagram";
             return {
               schematic_url: url,
-              schematic_markdown: `[${h.schematic_caption || "View OEM Diagram"}](${url})`,
+              schematic_markdown: `![${captionOrTitle}](${url})`,
             };
           })()
         : {}),
@@ -906,31 +980,55 @@ export async function hybridSearch(
   // Deduplicate by chunk ID and cross-edition
   mappedResults = deduplicateCrossEditionChunks(mappedResults);
 
+  // Check whether query contains explicit BEV tokens
+  const isBevQuery = queryContainsBevIndicators(options.queryText);
+
   // Generic ranking priority:
   // 1. Exact model match (when options.model is specified) ranks ahead of derivative/compound models
   // 2. Default US/global market preference (when options.market is not specified or "us") ranks ahead of foreign regional markets
-  if (options.model || defaultMarketPreference === "us") {
-    mappedResults.sort((a, b) => {
-      if (options.model) {
-        const reqModel = options.model.toLowerCase().trim();
-        const aExact = (a.model || "").toLowerCase() === reqModel ? 1 : 0;
-        const bExact = (b.model || "").toLowerCase() === reqModel ? 1 : 0;
-        if (aExact !== bExact) {
-          return bExact - aExact;
-        }
+  // 3. Intelligent Powertrain / Fuel Bias: Default to ICE unless BEV indicators were explicitly provided
+  mappedResults.sort((a, b) => {
+    if (options.model) {
+      const reqModel = options.model.toLowerCase().trim();
+      const aExact = (a.model || "").toLowerCase() === reqModel ? 1 : 0;
+      const bExact = (b.model || "").toLowerCase() === reqModel ? 1 : 0;
+      if (aExact !== bExact) {
+        return bExact - aExact;
       }
+    }
 
-      if (defaultMarketPreference === "us") {
-        const aIsUs = (a.market || "global").toLowerCase() === "us" || (a.market || "global").toLowerCase() === "global" ? 1 : 0;
-        const bIsUs = (b.market || "global").toLowerCase() === "us" || (b.market || "global").toLowerCase() === "global" ? 1 : 0;
-        if (aIsUs !== bIsUs) {
-          return bIsUs - aIsUs;
-        }
+    if (defaultMarketPreference === "us") {
+      const aIsUs = (a.market || "global").toLowerCase() === "us" || (a.market || "global").toLowerCase() === "global" ? 1 : 0;
+      const bIsUs = (b.market || "global").toLowerCase() === "us" || (b.market || "global").toLowerCase() === "global" ? 1 : 0;
+      if (aIsUs !== bIsUs) {
+        return bIsUs - aIsUs;
       }
+    }
 
+    // Powertrain bias:
+    // If not a BEV query, prioritize ICE / neutral chunks ahead of BEV chunks.
+    // If an explicit BEV query, prioritize BEV chunks.
+    const aFuel = a.fuel_type || extractChunkFuelType(a);
+    const bFuel = b.fuel_type || extractChunkFuelType(b);
+    if (!isBevQuery) {
+      const aIsIce = aFuel !== "bev" ? 1 : 0;
+      const bIsIce = bFuel !== "bev" ? 1 : 0;
+      if (aIsIce !== bIsIce) {
+        return bIsIce - aIsIce;
+      }
+    } else {
+      const aIsBev = aFuel === "bev" ? 1 : 0;
+      const bIsBev = bFuel === "bev" ? 1 : 0;
+      if (aIsBev !== bIsBev) {
+        return bIsBev - aIsBev;
+      }
+    }
+
+    if (options.model || defaultMarketPreference === "us") {
       return b.score - a.score;
-    });
-  }
+    }
+    return 0;
+  });
 
   return mappedResults.slice(0, options.topK ?? 8);
 }
