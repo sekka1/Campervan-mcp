@@ -285,6 +285,12 @@ export function queryContainsBevIndicators(query?: string): boolean {
   });
 }
 
+export const BEV_CONTENT_REGEX =
+  /\b(bev|e-transit|etransit|esprinter|promaster[\s-]ev|traction battery|hv battery|megabrace|high[\s-]voltage\s+(?:battery|traction|system|interlock|disconnect|cable|inverter)|e185976b)\b/i;
+
+export const COMBUSTION_CONTENT_REGEX =
+  /\b(ice|gas|gasoline|diesel|alternator|om654|ecoboost)\b/i;
+
 /**
  * Extracts fuel / powertrain classification from chunk metadata or text.
  * Returns 'bev' if electric, 'ice' if internal combustion, or undefined if neutral/universal.
@@ -313,11 +319,40 @@ export function extractChunkFuelType(chunk: {
 
   // Check document title or source name
   const title = `${chunk.document_title || ""} ${chunk.source || ""}`.toLowerCase();
-  if (title.includes("e-transit") || title.includes("etransit") || title.includes("esprinter") || title.includes("all-electric") || title.includes("battery electric")) {
+  if (
+    title.includes("e-transit") ||
+    title.includes("etransit") ||
+    title.includes("esprinter") ||
+    title.includes("all-electric") ||
+    title.includes("battery electric")
+  ) {
     return "bev";
   }
 
+  // Check chunk text for explicit propulsion markers if present
+  if (chunk.chunk_text) {
+    if (BEV_CONTENT_REGEX.test(chunk.chunk_text)) return "bev";
+    if (COMBUSTION_CONTENT_REGEX.test(chunk.chunk_text)) return "ice";
+  }
+
   return undefined;
+}
+
+/**
+ * Checks if two chunks share compatible powertrains.
+ * Prevents stitching BEV continuation text or inheriting BEV schematics into an ICE parent chunk (and vice versa).
+ */
+export function arePowertrainsCompatible(
+  parent: { metadata_json?: string | null; document_title?: string | null; chunk_text?: string | null; source?: string | null },
+  sibling: { metadata_json?: string | null; document_title?: string | null; chunk_text?: string | null; source?: string | null }
+): boolean {
+  const parentFuel = extractChunkFuelType(parent);
+  const sibFuel = extractChunkFuelType(sibling);
+
+  if (parentFuel === "ice" && sibFuel === "bev") return false;
+  if (parentFuel === "bev" && sibFuel === "ice") return false;
+
+  return true;
 }
 
 /**
@@ -736,7 +771,7 @@ export async function hydrateChunks(
     const idx = parseInt(parsed[2]!, 10);
     const sib1 = sibMap.get(`${docPrefix}#chunk_${idx + 1}`) ?? map.get(`${docPrefix}#chunk_${idx + 1}`);
 
-    if (sib1 && sib1.document_id === chunk.document_id) {
+    if (sib1 && sib1.document_id === chunk.document_id && arePowertrainsCompatible(chunk, sib1)) {
       const sectionLabel = sib1.section_title ? ` (${sib1.section_title})` : "";
       chunk.chunk_text += `\n\n[Continuation from next section/table${sectionLabel}]:\n${sib1.chunk_text}`;
 
@@ -749,7 +784,7 @@ export async function hydrateChunks(
       const sharesPage = sib1.page_number === chunk.page_number;
       if (hasContinuationCue || sharesPage) {
         const sib2 = sibMap.get(`${docPrefix}#chunk_${idx + 2}`) ?? map.get(`${docPrefix}#chunk_${idx + 2}`);
-        if (sib2 && sib2.document_id === chunk.document_id) {
+        if (sib2 && sib2.document_id === chunk.document_id && arePowertrainsCompatible(chunk, sib2)) {
           const sec2Label = sib2.section_title ? ` (${sib2.section_title})` : "";
           chunk.chunk_text += `\n\n[Continuation${sec2Label}]:\n${sib2.chunk_text}`;
           if (!chunk.schematic_r2_key && sib2.schematic_r2_key) {

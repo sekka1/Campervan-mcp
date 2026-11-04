@@ -14,6 +14,9 @@ describe("scripts/patch-powertrain-metadata", () => {
       expect(BEV_SCAN_REGEX.test("Ram ProMaster EV traction battery zone")).toBe(true);
       expect(BEV_SCAN_REGEX.test("Figure E185976b BEV Ground Points")).toBe(true);
       expect(BEV_SCAN_REGEX.test("Standard 3.5L EcoBoost engine ground")).toBe(false);
+      // Ensures generic high voltage inverter / shore power warnings are not falsely flagged as BEV
+      expect(BEV_SCAN_REGEX.test("Warning: High voltage AC input from shore power")).toBe(false);
+      expect(BEV_SCAN_REGEX.test("High voltage dangerous conditions exist inside inverter")).toBe(false);
     });
 
     it("identifies ICE markers across chassis", () => {
@@ -51,6 +54,18 @@ describe("scripts/patch-powertrain-metadata", () => {
       expect(result.shouldSeverImage).toBe(true);
     });
 
+    it("severs diagram when page-level evidence indicates BEV even if image caption is generic", () => {
+      const result = computePatchedChunkMetadata({
+        chunk_text: "Standard 3.5L EcoBoost gasoline chassis ground studs 49 to 88",
+        section_title: "Chassis Grounding",
+        image_caption: "Overview diagram",
+        is_page_bev: true, // Page has BEV text/diagram
+      });
+
+      expect(result.fuel).toBe("ice");
+      expect(result.shouldSeverImage).toBe(true);
+    });
+
     it("retains ICE image when chunk is classified as ICE", () => {
       const result = computePatchedChunkMetadata({
         chunk_text: "Standard 3.5L EcoBoost gasoline chassis ground studs 49 to 88",
@@ -63,10 +78,47 @@ describe("scripts/patch-powertrain-metadata", () => {
       expect(result.shouldSeverImage).toBe(false);
     });
 
+    it("preserves existing chunk BEV metadata without overwriting to ICE", () => {
+      const result = computePatchedChunkMetadata({
+        chunk_text: "Seat installation bolt torque specifications",
+        section_title: "Seats",
+        metadata_json: JSON.stringify({ fuel: "bev", powertrain: "bev", year_start: 2024 }),
+        image_caption: "Seat mounting schematic",
+      });
+
+      expect(result.fuel).toBe("bev");
+      expect(result.powertrain).toBe("bev");
+      expect(result.shouldSeverImage).toBe(false); // Valid BEV image preserved
+    });
+
+    it("inherits parent document BEV classification when chunk text is neutral", () => {
+      const result = computePatchedChunkMetadata({
+        chunk_text: "Door trim panel removal steps",
+        section_title: "Body and Paint",
+        doc_title: "2024 Ford E-Transit Body Builder Manual",
+        doc_metadata_json: JSON.stringify({ fuel: "bev", powertrain: "bev" }),
+      });
+
+      expect(result.fuel).toBe("bev");
+      expect(result.powertrain).toBe("bev");
+    });
+
+    it("defaults universal chassis to fuel: all", () => {
+      const result = computePatchedChunkMetadata({
+        chunk_text: "Connect MPPT charge controller to 12V busbar",
+        section_title: "Solar Wiring",
+        applicable_chassis: "universal",
+      });
+
+      expect(result.fuel).toBe("all");
+      expect(result.powertrain).toBe("all");
+    });
+
     it("defaults ambiguous chassis chunk to ICE", () => {
       const result = computePatchedChunkMetadata({
         chunk_text: "Seat pedestal ground stud torque spec 25 Nm",
         section_title: "Ground Points",
+        applicable_chassis: "transit",
       });
 
       expect(result.fuel).toBe("ice");
