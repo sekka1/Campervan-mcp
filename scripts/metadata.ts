@@ -77,10 +77,16 @@ export function parseExtraTokens(extra: string): PouchMetadata {
     pouch.voltage = parseInt(voltMatch[1]!, 10);
   }
 
-  // Fuel type: e.g. "diesel", "gas", "gasoline", "propane"
-  const fuelMatch = lower.match(/(?:^|[^a-z0-9])(diesel|gasoline|gas|propane)(?:$|[^a-z0-9])/);
+  // Fuel / powertrain type: e.g. "bev", "electric", "diesel", "gas", "gasoline", "propane", "phev", "hybrid"
+  const fuelMatch = lower.match(/(?:^|[^a-z0-9])(bev|electric|ev|diesel|gasoline|gas|propane|phev|hybrid)(?:$|[^a-z0-9])/);
   if (fuelMatch) {
-    pouch.fuel = fuelMatch[1] === "gas" ? "gasoline" : fuelMatch[1];
+    const rawFuel = fuelMatch[1]!;
+    if (rawFuel === "gas") pouch.fuel = "gasoline";
+    else if (rawFuel === "electric" || rawFuel === "ev") pouch.fuel = "bev";
+    else pouch.fuel = rawFuel;
+    if (pouch.fuel === "bev") {
+      pouch.powertrain = "bev";
+    }
   }
 
   // Chassis code: e.g. "v363n", "v363", "vs30", "ncv3"

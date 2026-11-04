@@ -110,7 +110,8 @@ describe("Dynamic Retrieval Grounding Contract & Manuals MCP Tools", () => {
       expect(contract.strict_grounding_rule).toContain(
         "Only provide specifications, dimensions, or torque values if explicitly contained"
       );
-      expect(contract.powertrain_rule).toContain("POWERTRAIN AWARENESS");
+      expect(contract.powertrain_rule).toContain("STRICT ICE DEFAULT");
+      expect(contract.diagram_text_integrity).toContain("DIAGRAM-TEXT CONSISTENCY");
       expect(contract.options_enumeration_rule).toContain("BROAD QUERY ENUMERATION");
       expect(contract.schematic_rule).toContain("MANDATORY DIAGRAMS");
     });
@@ -133,7 +134,8 @@ describe("Dynamic Retrieval Grounding Contract & Manuals MCP Tools", () => {
 
       const desc = manualTool!.description;
       expect(desc).toContain("Adhere strictly to the returned 'retrieval_contract'.");
-      expect(desc).toContain("POWERTRAIN AWARENESS");
+      expect(desc).toContain("STRICT ICE DEFAULT");
+      expect(desc).toContain("DIAGRAM-TEXT CONSISTENCY");
       expect(desc).toContain("BROAD QUERY ENUMERATION");
       expect(desc).toContain("MANDATORY DIAGRAMS");
       expect(desc).toContain("CRITICAL NEGATIVE CONSTRAINT");
@@ -342,13 +344,12 @@ describe("Dynamic Retrieval Grounding Contract & Manuals MCP Tools", () => {
         }
       );
 
-      expect(iceFirstResults).toHaveLength(2);
+      expect(iceFirstResults).toHaveLength(1);
       expect(iceFirstResults[0].id).toBe("transit_ice_ground_chunk");
       expect(iceFirstResults[0].schematic_url).toBe("https://pub-manuals.r2.dev/schematics/transit_ice_ground.png");
       expect(iceFirstResults[0].schematic_markdown).toBe(
         "![Transit ICE Ground Locations](https://pub-manuals.r2.dev/schematics/transit_ice_ground.png)"
       );
-      expect(iceFirstResults[1].id).toBe("transit_bev_ground_chunk");
 
       // Query with BEV indicator -> BEV chunk remains #1 based on raw score
       const bevResults = await hybridSearch(

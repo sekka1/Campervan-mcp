@@ -1030,5 +1030,18 @@ export async function hybridSearch(
     return 0;
   });
 
+  // Step 3 Post-Retrieval Re-Ranking & Filtering:
+  // If not an explicit BEV query, strictly filter out fuel === 'bev' chunks if non-BEV chunks exist.
+  // Only return BEV chunks if isBevQuery is true or if zero non-BEV chunks matched.
+  if (!isBevQuery) {
+    const nonBevChunks = mappedResults.filter((chunk) => {
+      const fuel = chunk.fuel_type || extractChunkFuelType(chunk);
+      return fuel !== "bev";
+    });
+    if (nonBevChunks.length > 0) {
+      mappedResults = nonBevChunks;
+    }
+  }
+
   return mappedResults.slice(0, options.topK ?? 8);
 }

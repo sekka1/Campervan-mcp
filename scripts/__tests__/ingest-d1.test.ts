@@ -137,7 +137,7 @@ describe("D1 statements", () => {
       "transit",
       "unknown",
       "global",
-      "{}",
+      JSON.stringify({ fuel: "ice", powertrain: "ice" }),
     ]);
   });
 

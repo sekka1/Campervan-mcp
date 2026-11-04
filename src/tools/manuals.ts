@@ -123,6 +123,7 @@ export interface RetrievalContract {
   strict_grounding_rule: string;
   missing_manual_rule: string;
   powertrain_rule: string;
+  diagram_text_integrity?: string;
   options_enumeration_rule: string;
   schematic_rule: string;
   no_matches_guidance?: string;
@@ -282,7 +283,8 @@ export function registerManualTools(
         `Searches indexed technical documentation, OEM body builder manuals (BEMM), and component guides.
 IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
 - Adhere strictly to the returned 'retrieval_contract'.
-- POWERTRAIN AWARENESS: Default to ICE (gas/diesel) specifications first without stalling to ask for clarification, unless an electric/BEV configuration is explicitly requested.
+- STRICT ICE DEFAULT: Always assume internal combustion engine (ICE / gas / diesel) by default. Deliver exhaustive ICE specifications first. Never gate the response asking if the user has an EV.
+- DIAGRAM-TEXT CONSISTENCY: Every callout number, pinout ID, or stud rating in your text MUST match the exact diagram image embedded. Never cite callout numbers from an electric/BEV diagram when describing an ICE vehicle (e.g., do not cite BEV points 1–45 when answering for ICE points 49–88).
 - BROAD QUERY ENUMERATION: When an inquiry is open-ended (e.g., connection points, mounting zones), output a structured, complete inventory of all documented options using compact tables or categorized lists with key parameters.
 - MANDATORY DIAGRAMS: Whenever a chunk contains a 'schematic_url', embed it inline in markdown: ![<Diagram Title>](<schematic_url>).
 - CRITICAL NEGATIVE CONSTRAINT: When a requested third-party component (e.g., MaxxFan, specific aftermarket appliance) is NOT found in the indexed manuals:
@@ -612,9 +614,11 @@ export async function searchVanManuals(
     missing_manual_rule:
       "CRITICAL NEGATIVE CONSTRAINT: When a requested third-party component (e.g., MaxxFan, specific aftermarket appliance) is NOT found in the indexed manuals: 1) State clearly that the component manual is not in the database. 2) Provide ONLY vehicle-side OEM chassis constraints (e.g., roof bow clearance, sealant requirements). 3) DO NOT attempt to provide 'widely published', 'typical', or general specifications for the missing component (especially torque, screw sizes, or cut-out tolerances). 4) Explicitly state: 'Consult the manufacturer\'s manual for torque and cut-out specifications, as no official torque value is provided in vehicle documentation.'",
     powertrain_rule:
-      "POWERTRAIN AWARENESS: Unless the user explicitly requests an electric or BEV configuration (e.g., E-Transit, eSprinter, EV), default to Internal Combustion Engine (ICE, gas/diesel) specifications. Deliver complete ICE specifications first without gating or stalling to ask for clarification. When an electric/BEV configuration IS explicitly requested, prioritize the electric chassis specifications immediately.",
+      "STRICT ICE DEFAULT: Always assume internal combustion engine (ICE / gas / diesel) by default. Deliver exhaustive ICE specifications first. Never gate the response asking if the user has an EV. When an electric/BEV configuration IS explicitly requested, prioritize the electric chassis specifications immediately.",
+    diagram_text_integrity:
+      "DIAGRAM-TEXT CONSISTENCY: Every callout number, pinout ID, or stud rating in your text MUST match the exact diagram image embedded. Never cite callout numbers from an electric/BEV diagram when describing an ICE vehicle (e.g., do not cite BEV points 1–45 when answering for ICE points 49–88). If the only retrieved diagram has a 'BEV' header and the query is ICE, DO NOT embed that image; explain that the ICE diagram is missing from the indexed results.",
     options_enumeration_rule:
-      "BROAD QUERY ENUMERATION: When an inquiry is open-ended or lacks specific layout context (e.g., available mounting zones, tap-in locations, connection points, or hardware ratings), DO NOT cherry-pick a single preferred option or collapse possibilities into vague summaries. Present a structured, complete inventory of all documented options from the retrieved chunks using compact tables or categorized lists with their key differentiating parameters (location, capacity/rating, restrictions). Give the user the full menu of what is physically and authoritatively possible so they can narrow down their specific configuration.",
+      "BROAD QUERY ENUMERATION: When an inquiry is open-ended (e.g., available ground locations, power taps, or mounting zones), do not group items into vague ranges or pick a single favorite. Present a structured, complete inventory of all documented options from the retrieved chunks using compact Markdown tables with their key differentiating parameters (Location, Stud/Thread Spec, Max Rating, Constraints).",
     schematic_rule:
       "MANDATORY DIAGRAMS: Whenever a chunk contains a 'schematic_url', you MUST embed it inline in your markdown response using: ![<Diagram Title>](<schematic_url>).",
   };
