@@ -862,5 +862,70 @@ describe("Generic Model Disambiguation, Market Defaults & Exact Chunk ID Dedupli
     expect(deduplicated).toHaveLength(2);
     expect(deduplicated.map((c) => c.id)).toEqual(["sprinter_manual#chunk_42", "sprinter_manual#chunk_43"]);
   });
+
+  it("fills all requested top_k slots from expanded candidate pool when candidates contain BEV chunks", async () => {
+    const vec = new Array(768).fill(0.1) as number[];
+    const matches: Array<{ id: string; score: number; metadata: { source: string; text: string } }> = [];
+    const d1Rows: Array<{
+      id: string;
+      document_id: string;
+      document_title: string;
+      category: string;
+      manufacturer: string;
+      applicable_chassis: string;
+      page_number: number;
+      section_title: string;
+      subsystem: string;
+      chunk_text: string;
+      schematic_r2_key: string | null;
+      schematic_caption: string | null;
+      model: string;
+      market: string;
+      metadata_json: string;
+    }> = [];
+
+    // Create 15 candidates: top 4 are BEV, next 11 are ICE
+    for (let i = 1; i <= 15; i++) {
+      const isBev = i <= 4;
+      const docId = isBev ? "doc_etransit" : "doc_transit";
+      const id = `${docId}#chunk_${i}`;
+      matches.push({
+        id,
+        score: 0.95 - i * 0.01,
+        metadata: { source: isBev ? "Ford E-Transit Manual" : "Ford Transit ICE Manual", text: `Ground point ${i}` },
+      });
+      d1Rows.push({
+        id,
+        document_id: docId,
+        document_title: isBev ? "Ford E-Transit BEMM" : "Ford Transit BEMM",
+        category: "chassis",
+        manufacturer: "Ford",
+        applicable_chassis: "transit",
+        page_number: i,
+        section_title: `Grounding Location ${i}`,
+        subsystem: "12v_dc",
+        chunk_text: `Ground point location ${i} on chassis frame rail with torque specification ${i * 5} Nm.`,
+        schematic_r2_key: null,
+        schematic_caption: null,
+        model: "transit",
+        market: "us",
+        metadata_json: JSON.stringify({ fuel: isBev ? "bev" : "ice", year_start: 2024 }),
+      });
+    }
+
+    const { index, query } = makeIndex(matches);
+    const { db } = makeDb(d1Rows);
+
+    const results = await hybridSearch(index, db, vec, {
+      topK: 8,
+      queryText: "Customer Connection Points CCP1 CCP2 driver seat",
+    });
+
+    expect(query.mock.calls[0]?.[1]?.topK).toBe(24);
+    expect(results).toHaveLength(8);
+    for (const res of results) {
+      expect(res.metadata_json).toContain('"fuel":"ice"');
+    }
+  });
 });
 });
