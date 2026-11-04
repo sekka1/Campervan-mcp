@@ -1021,12 +1021,27 @@ export function buildD1DeleteStatements(documentId: string): D1Statement[] {
 /**
  * Statements that (re)write a document, its schematic images and its chunks. Existing chunks
  * and images for the document are removed first (chunks first, because they reference images)
- * so a re-ingest never leaves stale rows behind. `document_chunks.id` equals the Vectorize
+ * so a re-ingest never leaves stale rows behind.
+ */
+export const BEV_MARKER_REGEX =
+  /\b(bev|e-transit|etransit|esprinter|promaster[\s-]ev|traction battery|hv battery|megabrace|high[\s-]voltage\s+(?:battery|traction|system|interlock|disconnect|cable|inverter)|e185976b)\b/i;
+
+export const COMBUSTION_MARKER_REGEX =
+  /\b(ice|gas|gasoline|diesel|alternator|om654|ecoboost)\b/i;
+
+/**
+ * Builds D1 SQL statements to replace a document's chunks. Chunks are keyed by
  * vector ID, and each chunk links to the first schematic image on its page.
  */
 export function buildD1UpsertStatements(
   doc: D1DocumentRecord,
-  chunks: ManualChunk[],
+  chunks: Array<{
+    id: string;
+    pageNumber: number;
+    sectionTitle: string | null;
+    text: string;
+    metadata?: ManualChunkMetadata | Record<string, unknown>;
+  }>,
   images: SchematicImage[] = []
 ): D1Statement[] {
   const model = doc.model ?? "unknown";
@@ -1047,9 +1062,25 @@ ON CONFLICT(id) DO UPDATE SET title = excluded.title, category = excluded.catego
     },
   ];
 
-  const imageByPage = new Map<number, string>();
+  // Gather page-level BEV text evidence across chunks to accurately classify diagrams on the same page
+  const pageHasBev = new Set<number>();
+  for (const chunk of chunks) {
+    const combined = `${chunk.sectionTitle || ""} ${chunk.text}`.toLowerCase();
+    if (BEV_MARKER_REGEX.test(combined)) {
+      pageHasBev.add(chunk.pageNumber);
+    }
+  }
+
+  // Create map of images by page and their detected powertrain
+  const imagesByPage = new Map<number, Array<{ id: string; isBev: boolean }>>();
   for (const image of images) {
-    if (!imageByPage.has(image.pageNumber)) imageByPage.set(image.pageNumber, image.id);
+    const isBevImage =
+      pageHasBev.has(image.pageNumber) ||
+      BEV_MARKER_REGEX.test(`${image.caption ?? ""} ${image.r2Key ?? ""}`);
+    const existing = imagesByPage.get(image.pageNumber) || [];
+    existing.push({ id: image.id, isBev: isBevImage });
+    imagesByPage.set(image.pageNumber, existing);
+
     statements.push({
       sql: `INSERT INTO schematic_images (id, document_id, page_number, caption, r2_key, mime_type, width, height)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -1062,6 +1093,49 @@ ON CONFLICT(id) DO UPDATE SET document_id = excluded.document_id, page_number = 
 
   for (const chunk of chunks) {
     const wordCount = chunk.text.split(/\s+/).filter(Boolean).length;
+    const combinedChunkText = `${chunk.sectionTitle || ""} ${chunk.text}`.toLowerCase();
+
+    // Automated Powertrain Tagging for chunks:
+    let chunkFuel: "bev" | "ice" | "all" = "all";
+    if (BEV_MARKER_REGEX.test(combinedChunkText)) {
+      chunkFuel = "bev";
+    } else if (
+      COMBUSTION_MARKER_REGEX.test(combinedChunkText) ||
+      doc.applicableChassis !== "universal"
+    ) {
+      chunkFuel = "ice";
+    }
+
+    // Merge with parent document metadata_json
+    let chunkMetaPouch: Record<string, unknown> = {};
+    try {
+      chunkMetaPouch = { ...(JSON.parse(metadataJson) as Record<string, unknown>) };
+    } catch {
+      chunkMetaPouch = {};
+    }
+
+    if (chunkMetaPouch.fuel === "bev") {
+      chunkFuel = "bev";
+    }
+
+    chunkMetaPouch.fuel = chunkFuel;
+    chunkMetaPouch.powertrain = chunkFuel;
+    const chunkMetadataJson = JSON.stringify(chunkMetaPouch);
+
+    // Image-to-Chunk Strict Binding:
+    // If a diagram header contains "BEV" (e.g., E185976b), that image must NEVER be attached to an ICE chunk.
+    const candidateImages = imagesByPage.get(chunk.pageNumber) || [];
+    let linkedImageId: string | null = null;
+    if (chunkFuel === "bev") {
+      const match = candidateImages.find((img) => img.isBev) || candidateImages[0];
+      linkedImageId = match?.id ?? null;
+    } else if (chunkFuel === "ice") {
+      const match = candidateImages.find((img) => !img.isBev);
+      linkedImageId = match?.id ?? null;
+    } else {
+      linkedImageId = candidateImages[0]?.id ?? null;
+    }
+
     statements.push({
       sql: `INSERT INTO document_chunks (id, document_id, page_number, section_title, subsystem, chunk_text, word_count, token_count, schematic_image_id, category, manufacturer, model, market, metadata_json)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1076,16 +1150,16 @@ ON CONFLICT(id) DO UPDATE SET document_id = excluded.document_id, page_number = 
         doc.id,
         chunk.pageNumber,
         chunk.sectionTitle,
-        chunk.metadata.subsystem,
+        typeof chunk.metadata?.subsystem === "string" ? chunk.metadata.subsystem : null,
         chunk.text,
         wordCount,
         Math.ceil(wordCount * TOKENS_PER_WORD),
-        imageByPage.get(chunk.pageNumber) ?? null,
+        linkedImageId,
         doc.category,
         doc.manufacturer,
         model,
         market,
-        metadataJson,
+        chunkMetadataJson,
       ],
     });
   }

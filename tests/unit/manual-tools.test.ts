@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { searchVanManuals, SearchVanManualsResponse } from "../../src/tools/manuals.ts";
 import { MCP_TOOLS, handleMcpRequest } from "../../src/index.ts";
+import { hybridSearch } from "../../src/utils/db.ts";
 
 describe("Dynamic Retrieval Grounding Contract & Manuals MCP Tools", () => {
   describe("1. Empty Retrieval / Missing Manuals Behavior", () => {
@@ -110,7 +111,8 @@ describe("Dynamic Retrieval Grounding Contract & Manuals MCP Tools", () => {
       expect(contract.strict_grounding_rule).toContain(
         "Only provide specifications, dimensions, or torque values if explicitly contained"
       );
-      expect(contract.powertrain_rule).toContain("POWERTRAIN AWARENESS");
+      expect(contract.powertrain_rule).toContain("STRICT ICE DEFAULT");
+      expect(contract.diagram_text_integrity).toContain("DIAGRAM-TEXT CONSISTENCY");
       expect(contract.options_enumeration_rule).toContain("BROAD QUERY ENUMERATION");
       expect(contract.schematic_rule).toContain("MANDATORY DIAGRAMS");
     });
@@ -133,7 +135,8 @@ describe("Dynamic Retrieval Grounding Contract & Manuals MCP Tools", () => {
 
       const desc = manualTool!.description;
       expect(desc).toContain("Adhere strictly to the returned 'retrieval_contract'.");
-      expect(desc).toContain("POWERTRAIN AWARENESS");
+      expect(desc).toContain("STRICT ICE DEFAULT");
+      expect(desc).toContain("DIAGRAM-TEXT CONSISTENCY");
       expect(desc).toContain("BROAD QUERY ENUMERATION");
       expect(desc).toContain("MANDATORY DIAGRAMS");
       expect(desc).toContain("CRITICAL NEGATIVE CONSTRAINT");
@@ -200,6 +203,8 @@ describe("Dynamic Retrieval Grounding Contract & Manuals MCP Tools", () => {
       const parsed = JSON.parse(res.result.content[0].text);
       expect(parsed.retrieval_metadata.retrieval_contract).toBeDefined();
       expect(parsed.retrieval_metadata.retrieval_contract.strict_grounding_rule).toBeDefined();
+      expect(parsed.retrieval_metadata.retrieval_contract.powertrain_rule).toContain("STRICT ICE DEFAULT");
+      expect(parsed.retrieval_metadata.retrieval_contract.diagram_text_integrity).toContain("DIAGRAM-TEXT CONSISTENCY");
     });
 
     it("coerces hallucinated subsystem aliases like 'climate' without throwing -32602 schema error", async () => {
@@ -342,13 +347,12 @@ describe("Dynamic Retrieval Grounding Contract & Manuals MCP Tools", () => {
         }
       );
 
-      expect(iceFirstResults).toHaveLength(2);
+      expect(iceFirstResults).toHaveLength(1);
       expect(iceFirstResults[0].id).toBe("transit_ice_ground_chunk");
       expect(iceFirstResults[0].schematic_url).toBe("https://pub-manuals.r2.dev/schematics/transit_ice_ground.png");
       expect(iceFirstResults[0].schematic_markdown).toBe(
         "![Transit ICE Ground Locations](https://pub-manuals.r2.dev/schematics/transit_ice_ground.png)"
       );
-      expect(iceFirstResults[1].id).toBe("transit_bev_ground_chunk");
 
       // Query with BEV indicator -> BEV chunk remains #1 based on raw score
       const bevResults = await hybridSearch(
@@ -364,6 +368,98 @@ describe("Dynamic Retrieval Grounding Contract & Manuals MCP Tools", () => {
 
       expect(bevResults).toHaveLength(2);
       expect(bevResults[0].id).toBe("transit_bev_ground_chunk");
+    });
+
+    it("prevents stitching BEV continuation chunks or borrowing BEV schematics into an ICE parent chunk", async () => {
+      const mockVectorIndex = {
+        query: vi.fn().mockResolvedValue({
+          matches: [
+            {
+              id: "transit_doc#chunk_10",
+              score: 0.95,
+              metadata: {
+                source: "2024 Ford Transit BEMM",
+                page: 45,
+                section: "4.15 Chassis Grounding",
+                text: "ICE grounding locations callouts 49-88 [Continued in next section]"
+              }
+            }
+          ]
+        })
+      };
+
+      const mockDb = {
+        prepare: vi.fn().mockImplementation((_queryStr: string) => {
+          return {
+            bind: vi.fn().mockImplementation((...ids: string[]) => {
+              return {
+                all: vi.fn().mockResolvedValue({
+                  results: ids.map((id) => {
+                    if (id === "transit_doc#chunk_10") {
+                      return {
+                        id: "transit_doc#chunk_10",
+                        document_id: "transit_doc",
+                        document_title: "2024 Ford Transit BEMM",
+                        category: "oem_bemm",
+                        manufacturer: "ford",
+                        applicable_chassis: "transit",
+                        page_number: 45,
+                        section_title: "4.15 Chassis Grounding",
+                        subsystem: "chassis_interface",
+                        chunk_text: "Standard ICE chassis ground studs 49 through 88. [Continued in next section]",
+                        schematic_r2_key: null,
+                        schematic_caption: null,
+                        model: "transit",
+                        market: "us",
+                        metadata_json: JSON.stringify({ fuel: "ice", powertrain: "ice" })
+                      };
+                    }
+                    if (id === "transit_doc#chunk_11") {
+                      return {
+                        id: "transit_doc#chunk_11",
+                        document_id: "transit_doc",
+                        document_title: "2024 Ford Transit BEMM",
+                        category: "oem_bemm",
+                        manufacturer: "ford",
+                        applicable_chassis: "transit",
+                        page_number: 46,
+                        section_title: "4.16 E-Transit High Voltage Disconnect",
+                        subsystem: "chassis_interface",
+                        chunk_text: "E-Transit BEV Megabrace traction battery disconnect callouts 1-45",
+                        schematic_r2_key: "schematics/e185976b.png",
+                        schematic_caption: "Figure E185976b BEV Ground Points",
+                        model: "transit",
+                        market: "us",
+                        metadata_json: JSON.stringify({ fuel: "bev", powertrain: "bev" })
+                      };
+                    }
+                    return null;
+                  }).filter(Boolean)
+                })
+              };
+            })
+          };
+        })
+      };
+
+      const results = await hybridSearch(
+        mockVectorIndex as unknown as Parameters<typeof hybridSearch>[0],
+        mockDb as unknown as Parameters<typeof hybridSearch>[1],
+        Array.from({ length: 768 }, () => 0.05),
+        {
+          topK: 1,
+          queryText: "where are the grounding points for transit",
+          cdnBaseUrl: "https://pub-manuals.r2.dev"
+        }
+      );
+
+      expect(results).toHaveLength(1);
+      // Verify BEV continuation was NOT stitched into ICE chunk
+      expect(results[0].text).not.toContain("E-Transit BEV Megabrace");
+      expect(results[0].text).not.toContain("callouts 1-45");
+      // Verify BEV schematic was NOT borrowed
+      expect(results[0].schematic_r2_key).toBeUndefined();
+      expect(results[0].schematic_url).toBeUndefined();
     });
   });
 });

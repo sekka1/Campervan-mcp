@@ -139,8 +139,14 @@ tests:
           - "ground point"
           - "ground stud"
           - "chassis ground"
+      - type: icontains
+        value: "49"
+      - type: not-contains
+        value: "E185976b"
+      - type: not-icontains
+        value: "Megabrace"
       - type: llm-rubric
-        value: "Invokes search_van_manuals, identifies approved Ford Transit ground locations (such as the driver's seat pedestal/base ground stud or pillar ground points), and warns that auxiliary negatives must connect to designated chassis ground studs rather than connecting directly to the battery negative terminal or bypassing the Battery Monitoring Sensor (BMS)."
+        value: "The response must provide ground points for the ICE Transit (points 49–88) and must NOT use callout numbers or diagrams from the BEV diagram (Figure E185976b, points 1–45). Invokes search_van_manuals, identifies approved Ford Transit ground locations (such as the driver's seat pedestal/base ground stud or pillar ground points), and warns that auxiliary negatives must connect to designated chassis ground studs rather than connecting directly to the battery negative terminal or bypassing the Battery Monitoring Sensor (BMS)."
       - type: latency
         threshold: 180000
 

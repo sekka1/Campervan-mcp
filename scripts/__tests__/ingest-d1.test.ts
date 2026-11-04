@@ -137,7 +137,7 @@ describe("D1 statements", () => {
       "transit",
       "unknown",
       "global",
-      "{}",
+      JSON.stringify({ fuel: "ice", powertrain: "ice" }),
     ]);
   });
 
@@ -163,6 +163,207 @@ describe("D1 statements", () => {
     const [chunk] = buildManualChunks("transit/bemm.pdf", "3.2 Roof Loads\nRoof load limits apply.");
     expect(chunk.sectionTitle).toBe("3.2 Roof Loads");
     expect(buildD1UpsertStatements(doc, [chunk])[3].params[3]).toBe("3.2 Roof Loads");
+  });
+
+  it("tags BEV powertrain and attaches BEV diagram when chunk text matches BEV markers", () => {
+    const bevChunk = {
+      id: "transit_bev_p1_chunk0",
+      pageNumber: 1,
+      sectionTitle: "High Voltage Traction Battery",
+      text: "Ford E-Transit 2024 high voltage traction battery disconnect and Megabrace mounting",
+    };
+    const bevImage = {
+      id: "transit_bev_img1",
+      documentId: "transit_bemm_pdf",
+      pageNumber: 1,
+      caption: "Figure E185976b BEV Grounding Points",
+      r2Key: "schematics/e185976b.png",
+      mimeType: "image/png",
+      width: 400,
+      height: 300,
+    };
+    const statements = buildD1UpsertStatements(doc, [bevChunk], [bevImage]);
+    const chunkRow = statements[4];
+    expect(chunkRow.params[8]).toBe(bevImage.id); // Linked because chunk is BEV and image is BEV
+    expect(chunkRow.params[13]).toBe(JSON.stringify({ fuel: "bev", powertrain: "bev" }));
+  });
+
+  it("never attaches a BEV diagram to an ICE chunk even on the same page", () => {
+    const iceChunk = {
+      id: "transit_ice_p1_chunk0",
+      pageNumber: 1,
+      sectionTitle: "Chassis Grounding",
+      text: "Standard 3.5L EcoBoost gasoline chassis ground studs 49 through 88",
+    };
+    const bevImage = {
+      id: "transit_bev_img1",
+      documentId: "transit_bemm_pdf",
+      pageNumber: 1,
+      caption: "Figure E185976b E-Transit BEV Grounding Points",
+      r2Key: "schematics/e185976b.png",
+      mimeType: "image/png",
+      width: 400,
+      height: 300,
+    };
+    const statements = buildD1UpsertStatements(doc, [iceChunk], [bevImage]);
+    const chunkRow = statements[4];
+    expect(chunkRow.params[8]).toBeNull(); // Severed/prevented: BEV image must NEVER attach to ICE chunk
+    expect(chunkRow.params[13]).toBe(JSON.stringify({ fuel: "ice", powertrain: "ice" }));
+  });
+
+  it("attaches non-BEV diagram to ICE chunk when multiple candidate diagrams exist", () => {
+    const iceChunk = {
+      id: "transit_ice_p1_chunk0",
+      pageNumber: 1,
+      sectionTitle: "Chassis Grounding",
+      text: "Standard 3.5L EcoBoost gasoline chassis ground studs 49 through 88",
+    };
+    const bevImage = {
+      id: "transit_bev_img1",
+      documentId: "transit_bemm_pdf",
+      pageNumber: 1,
+      caption: "Figure E185976b E-Transit BEV Grounding Points",
+      r2Key: "schematics/e185976b.png",
+      mimeType: "image/png",
+      width: 400,
+      height: 300,
+    };
+    const iceImage = {
+      id: "transit_ice_img1",
+      documentId: "transit_bemm_pdf",
+      pageNumber: 1,
+      caption: "Figure E185976 Transit Grounding Points",
+      r2Key: "schematics/e185976.png",
+      mimeType: "image/png",
+      width: 400,
+      height: 300,
+    };
+    const statements = buildD1UpsertStatements(doc, [iceChunk], [bevImage, iceImage]);
+    const chunkRow = statements[5];
+    expect(chunkRow.params[8]).toBe(iceImage.id); // Picks the non-BEV image
+  });
+
+  it("defaults universal chassis with generic text to fuel: all", () => {
+    const universalDoc = {
+      ...doc,
+      id: "victron_doc",
+      applicableChassis: "universal",
+      metadata_json: "{}",
+    };
+    const genericChunk = {
+      id: "victron_p1_chunk0",
+      pageNumber: 1,
+      sectionTitle: "Solar Wiring",
+      text: "Connect MPPT charge controller to positive and negative busbars",
+    };
+    const statements = buildD1UpsertStatements(universalDoc, [genericChunk]);
+    const chunkRow = statements[3];
+    expect(chunkRow.params[13]).toBe(JSON.stringify({ fuel: "all", powertrain: "all" }));
+  });
+
+  it("respects doc-level BEV classification in metadata_json", () => {
+    const docWithBevMeta = {
+      ...doc,
+      metadata_json: JSON.stringify({ fuel: "bev", powertrain: "bev", year_start: 2024 }),
+    };
+    const chunk = {
+      id: "transit_p1_chunk0",
+      pageNumber: 1,
+      sectionTitle: "General",
+      text: "Seat installation torque specifications",
+    };
+    const statements = buildD1UpsertStatements(docWithBevMeta, [chunk]);
+    const chunkRow = statements[3];
+    const pouch = JSON.parse(chunkRow.params[13] as string);
+    expect(pouch.fuel).toBe("bev");
+    expect(pouch.powertrain).toBe("bev");
+    expect(pouch.year_start).toBe(2024);
+  });
+
+  it("handles malformed JSON in doc.metadata_json gracefully", () => {
+    const docWithBadJson = {
+      ...doc,
+      metadata_json: "{not valid json}",
+    };
+    const chunk = {
+      id: "transit_p1_chunk0",
+      pageNumber: 1,
+      sectionTitle: "General",
+      text: "Seat installation torque specifications",
+    };
+    const statements = buildD1UpsertStatements(docWithBadJson, [chunk]);
+    const chunkRow = statements[3];
+    const pouch = JSON.parse(chunkRow.params[13] as string);
+    expect(pouch.fuel).toBe("ice");
+  });
+
+  it("detects BEV image via r2Key when caption is null/empty", () => {
+    const bevChunk = {
+      id: "transit_bev_p1_chunk0",
+      pageNumber: 1,
+      sectionTitle: "BEV",
+      text: "E-Transit high voltage battery",
+    };
+    const bevImageNoCaption = {
+      id: "img_key_bev",
+      documentId: "transit_bemm_pdf",
+      pageNumber: 1,
+      caption: "",
+      r2Key: "schematics/transit_e185976b_diagram.png",
+      mimeType: "image/png",
+      width: 400,
+      height: 300,
+    };
+    const statements = buildD1UpsertStatements(doc, [bevChunk], [bevImageNoCaption]);
+    expect(statements[4].params[8]).toBe(bevImageNoCaption.id);
+  });
+
+  it("attaches fallback diagram to BEV chunk when candidate image is not explicitly BEV", () => {
+    const bevChunk = {
+      id: "transit_bev_p1_chunk0",
+      pageNumber: 1,
+      sectionTitle: "BEV",
+      text: "E-Transit high voltage battery",
+    };
+    const genericImage = {
+      id: "img_generic",
+      documentId: "transit_bemm_pdf",
+      pageNumber: 1,
+      caption: "Overview diagram",
+      r2Key: "schematics/overview.png",
+      mimeType: "image/png",
+      width: 400,
+      height: 300,
+    };
+    const statements = buildD1UpsertStatements(doc, [bevChunk], [genericImage]);
+    expect(statements[4].params[8]).toBe(genericImage.id);
+  });
+
+  it("links available image to universal chunk (fuel: all)", () => {
+    const universalDoc = {
+      ...doc,
+      id: "victron_doc",
+      applicableChassis: "universal",
+      metadata_json: "{}",
+    };
+    const genericChunk = {
+      id: "victron_p1_chunk0",
+      pageNumber: 1,
+      sectionTitle: "Solar Wiring",
+      text: "Connect MPPT charge controller to positive and negative busbars",
+    };
+    const genericImage = {
+      id: "victron_img1",
+      documentId: "victron_doc",
+      pageNumber: 1,
+      caption: "MPPT wiring diagram",
+      r2Key: "schematics/mppt.png",
+      mimeType: "image/png",
+      width: 400,
+      height: 300,
+    };
+    const statements = buildD1UpsertStatements(universalDoc, [genericChunk], [genericImage]);
+    expect(statements[4].params[8]).toBe(genericImage.id);
   });
 
   it("builds delete statements for a document", () => {
