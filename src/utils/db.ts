@@ -591,13 +591,32 @@ export function deduplicateCrossEditionChunks(
 
       // Only deduplicate between DIFFERENT editions/documents of the same vehicle family & market
       const isDifferentEdition = curDoc !== exDoc || (curYear !== exYear && curYear > 0 && exYear > 0);
+      const curFuel = current.fuel_type || extractChunkFuelType({
+        metadata_json: current.metadata_json,
+        document_title: current.document_title,
+        source: current.source,
+        chunk_text: current.text,
+      });
+      const exFuel = existing.fuel_type || extractChunkFuelType({
+        metadata_json: existing.metadata_json,
+        document_title: existing.document_title,
+        source: existing.source,
+        chunk_text: existing.text,
+      });
+      const isPowertrainMismatch =
+        curFuel &&
+        exFuel &&
+        curFuel !== exFuel &&
+        (curFuel === "bev" || exFuel === "bev");
+
       if (
         mfg &&
         exMfg &&
         mfg === exMfg &&
         mdl === exMdl &&
         mkt === exMkt &&
-        isDifferentEdition
+        isDifferentEdition &&
+        !isPowertrainMismatch
       ) {
         const normExisting = normalizeChunkForDedup(existing.text);
         const overlap = computeTokenOverlap(normCurrent, normExisting);
@@ -872,9 +891,11 @@ export async function hybridSearch(
   const defaultMarketPreference = options.market ?? "us";
   const effectiveModel = options.model;
   const effectiveMarket = options.market;
+  const requestedTopK = options.topK ?? 8;
+  const candidatePoolSize = Math.max(requestedTopK * 3, 24);
 
   let matches = await searchManuals(vectorIndex, queryVector, {
-    topK: options.topK ?? 8,
+    topK: candidatePoolSize,
     ...(Object.keys(filter).length > 0 ? { filter } : {}),
   });
 
@@ -882,7 +903,7 @@ export async function hybridSearch(
   // fall back to unfiltered semantic search so relevant chunks are not lost.
   if (matches.length === 0 && Object.keys(filter).length > 0) {
     matches = await searchManuals(vectorIndex, queryVector, {
-      topK: options.topK ?? 8,
+      topK: candidatePoolSize,
     });
   }
   if (db && options.queryText) {
@@ -916,7 +937,7 @@ export async function hybridSearch(
             });
           }
         }
-        matches = reorderedMatches.slice(0, Math.max(options.topK ?? 8, 12));
+        matches = reorderedMatches.slice(0, candidatePoolSize);
       }
     }
   }
@@ -1078,5 +1099,5 @@ export async function hybridSearch(
     }
   }
 
-  return mappedResults.slice(0, options.topK ?? 8);
+  return mappedResults.slice(0, requestedTopK);
 }
