@@ -1051,7 +1051,7 @@ ON CONFLICT(id) DO UPDATE SET title = excluded.title, category = excluded.catego
   const imagesByPage = new Map<number, Array<{ id: string; isBev: boolean }>>();
   for (const image of images) {
     const isBevImage = /\b(bev|e-transit|etransit|esprinter|promaster ev|high voltage|megabrace|hv battery|traction battery|e185976b)\b/i.test(
-      `${image.caption || ""} ${image.r2Key || ""}`
+      `${image.caption ?? ""} ${image.r2Key ?? ""}`
     );
     const existing = imagesByPage.get(image.pageNumber) || [];
     existing.push({ id: image.id, isBev: isBevImage });
@@ -1072,66 +1072,48 @@ ON CONFLICT(id) DO UPDATE SET document_id = excluded.document_id, page_number = 
     const combinedChunkText = `${chunk.sectionTitle || ""} ${chunk.text}`.toLowerCase();
 
     // Automated Powertrain Tagging for chunks:
-    // 1. BEV markers
-    let chunkFuel = "all";
-    let chunkPowertrain = "all";
-
+    let chunkFuel: "bev" | "ice" | "all" = "all";
     if (
       /\b(bev|e-transit|etransit|esprinter|promaster ev|high voltage|megabrace|hv battery|traction battery|e185976b)\b/i.test(
         combinedChunkText
       )
     ) {
       chunkFuel = "bev";
-      chunkPowertrain = "bev";
     } else if (
       /\b(ice|gas|gasoline|diesel|alternator|om654|ecoboost)\b/i.test(combinedChunkText) ||
       doc.applicableChassis !== "universal"
     ) {
       chunkFuel = "ice";
-      chunkPowertrain = "ice";
     }
 
     // Merge with parent document metadata_json
     let chunkMetaPouch: Record<string, unknown> = {};
     try {
-      const parsed = typeof metadataJson === "string" ? JSON.parse(metadataJson) : metadataJson;
-      if (parsed && typeof parsed === "object") {
-        chunkMetaPouch = { ...(parsed as Record<string, unknown>) };
-      }
+      chunkMetaPouch = { ...(JSON.parse(metadataJson) as Record<string, unknown>) };
     } catch {
       chunkMetaPouch = {};
     }
 
-    // If document is already classified as BEV, respect that; otherwise chunk classification takes effect
-    if (chunkMetaPouch.fuel === "bev" || chunkMetaPouch.powertrain === "bev") {
+    if (chunkMetaPouch.fuel === "bev") {
       chunkFuel = "bev";
-      chunkPowertrain = "bev";
     }
 
     chunkMetaPouch.fuel = chunkFuel;
-    chunkMetaPouch.powertrain = chunkPowertrain;
+    chunkMetaPouch.powertrain = chunkFuel;
     const chunkMetadataJson = JSON.stringify(chunkMetaPouch);
 
     // Image-to-Chunk Strict Binding:
-    // If a diagram header contains "BEV" (e.g., E185976b), that image must NEVER be attached to an ice chunk
+    // If a diagram header contains "BEV" (e.g., E185976b), that image must NEVER be attached to an ICE chunk.
     const candidateImages = imagesByPage.get(chunk.pageNumber) || [];
     let linkedImageId: string | null = null;
-    for (const candidate of candidateImages) {
-      if (candidate.isBev && chunkFuel === "ice") {
-        continue; // Never attach BEV image to ICE chunk
-      }
-      if (!candidate.isBev && chunkFuel === "bev") {
-        continue; // Never attach non-BEV image to BEV chunk if avoidable
-      }
-      linkedImageId = candidate.id;
-      break;
-    }
-    // Fallback: if no fuel-exclusive match, only attach if candidate is NOT a BEV image
-    if (!linkedImageId && candidateImages.length > 0 && chunkFuel !== "ice") {
-      linkedImageId = candidateImages[0]!.id;
-    } else if (!linkedImageId && candidateImages.length > 0 && chunkFuel === "ice") {
-      const nonBev = candidateImages.find((img) => !img.isBev);
-      if (nonBev) linkedImageId = nonBev.id;
+    if (chunkFuel === "bev") {
+      const match = candidateImages.find((img) => img.isBev) || candidateImages[0];
+      linkedImageId = match?.id ?? null;
+    } else if (chunkFuel === "ice") {
+      const match = candidateImages.find((img) => !img.isBev);
+      linkedImageId = match?.id ?? null;
+    } else {
+      linkedImageId = candidateImages[0]?.id ?? null;
     }
 
     statements.push({
@@ -1148,7 +1130,7 @@ ON CONFLICT(id) DO UPDATE SET document_id = excluded.document_id, page_number = 
         doc.id,
         chunk.pageNumber,
         chunk.sectionTitle,
-        chunk.metadata.subsystem,
+        chunk.metadata?.subsystem ?? null,
         chunk.text,
         wordCount,
         Math.ceil(wordCount * TOKENS_PER_WORD),
