@@ -213,6 +213,7 @@ rule that names the page, part, vehicle or circuit you just saw.** Classify the 
 | Model recommends something unsafe/irrelevant to the user's goal | **Contract principle** (purpose-matching), never an item list | `recommendation_rule` |
 | Model overstates completeness or skips warnings | **Contract principle** | `completeness_and_warnings_rule` |
 | Math / unit / table lookup errors | **Deterministic code** | `src/utils/formulas.ts` + tests |
+| A page has text but no schematic, or ingestion logs image-decode errors (publisher-specific image codecs) | **PDF runtime** (ingestion, not the classifier) | `scripts/pdf-runtime.ts` `openPdf()` (§10) |
 
 Rules of thumb:
 1. **Examples ≠ rules.** Put the concrete case in a *test fixture or promptfoo case* (labeled as a regression/example),
@@ -315,3 +316,32 @@ returns that edition's own pages (the ground-point pages moved: p151 / p157 / p1
 manual puts the ICE ground-point page ~7 pages after the BEV section opener and its ICE diagram page has no extracted
 image), so never hardcode pages; the `promoteNonBevNeighbors` window (3 pages) and schematic extraction are follow-ups.
 
+## 10. PDF parsing runtime for ingestion (`scripts/pdf-runtime.ts`)
+
+**Failure class:** *a manual's images are stored in a codec our PDF parser cannot decode, so pages silently lose their
+schematics.* Whether this happens depends on how the publisher encoded the images, not on the manual's content, so it
+can hit one edition of a manual and not its siblings, and it can hit any vendor (chassis, battery, HVAC, plumbing).
+Symptom: `extractImages` returns nothing for some pages, ingestion logs show e.g. `OpenJPEG failed to initialize`
+(JPEG 2000 / JPX) or a JBIG2 error, and retrieval returns the page's text with no `schematic_url`.
+
+**Cause:** the PDF.js build bundled inside `unpdf` is a serverless build with the JPX and JBIG2 decoders stubbed out.
+
+**Mechanism (applies to every manual):** all ingestion scripts open PDFs through `openPdf()` in
+`scripts/pdf-runtime.ts`, never `getDocumentProxy` directly. It swaps in the full `pdfjs-dist` build once
+(`definePDFJSModule`) and passes `wasmUrl` pointing at its `wasm/` decoder directory. These scripts run in Node; the
+Worker never parses PDFs, so the Worker bundle is unaffected.
+
+**Rules:**
+1. New code that opens a PDF for ingestion must use `openPdf()`. (`scripts/__tests__/pdf-runtime.test.ts` checks the
+   full build is loaded once and that the wasm directory really contains the decoders.)
+2. `pdfjs-dist` is a dev dependency **pinned to the version `unpdf` bundles**. When upgrading `unpdf`, bump
+   `pdfjs-dist` to match, or the API/worker versions will mismatch.
+3. Diagnose with data first: if a page has no schematic, check the ingest logs for image-decode errors before
+   suspecting the chunker or the chunk-to-image binding (`pnpm local:sql` on `schematic_images` for that page).
+4. **Already-ingested manuals are not fixed automatically.** Pages that lost images at ingest time keep no schematic
+   until that manual is re-ingested. Unlike powertrain tags (§2), this is a case where re-ingesting *does* change the
+   result, because the input to image extraction changed.
+
+**Known limits.** Other codecs or malformed streams (e.g. `Bad FCHECK in flate stream` warnings seen in tests) are
+tolerated by PDF.js but may still drop an image; add any new class here with the mechanism that covers it rather than
+a per-manual workaround.

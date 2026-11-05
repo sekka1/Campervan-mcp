@@ -30,7 +30,8 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
-import { extractImages, extractText, getDocumentProxy } from "unpdf";
+import { extractImages, extractText } from "unpdf";
+import { openPdf } from "./pdf-runtime";
 import {
   generateEmbeddings,
   PDF_PARSE_VERBOSITY,
@@ -116,7 +117,7 @@ async function main(): Promise<void> {
 
     // 3. Parse and chunk the PDF text.
     console.log("[3/7] Parsing and chunking the PDF...");
-    const pdf = await getDocumentProxy(new Uint8Array(downloadedBytes), { verbosity: PDF_PARSE_VERBOSITY });
+    const pdf = await openPdf(new Uint8Array(downloadedBytes), { verbosity: PDF_PARSE_VERBOSITY });
     const { text } = await extractText(pdf, { mergePages: false });
     const chunks = buildR2ManualChunks(key, text);
     if (chunks.length === 0) {
@@ -152,7 +153,7 @@ async function main(): Promise<void> {
 
     // 6. Upload a schematic image through the R2 REST API and read it back through the S3 API.
     console.log("[6/7] Uploading a schematic PNG via the R2 REST API and verifying it...");
-    const schematicPdf = await getDocumentProxy(new Uint8Array(readFileSync(SCHEMATIC_FIXTURE_PDF_PATH)), {
+    const schematicPdf = await openPdf(new Uint8Array(readFileSync(SCHEMATIC_FIXTURE_PDF_PATH)), {
       verbosity: PDF_PARSE_VERBOSITY,
     });
     const schematics = prepareSchematics(

@@ -44,7 +44,8 @@ import {
   S3Client,
   type _Object,
 } from "@aws-sdk/client-s3";
-import { extractText, getDocumentProxy } from "unpdf";
+import { extractText } from "unpdf";
+import { openPdf } from "./pdf-runtime";
 import { extractCoverPageText, extractDocumentMetadata, type UniversalMetadata } from "./metadata";
 import {
   batchArray,
@@ -317,7 +318,7 @@ export async function processAddedModifiedR2Object(
 
   try {
     const buffer = readFileSync(tempPath);
-    const pdf = await getDocumentProxy(new Uint8Array(buffer), { verbosity: PDF_PARSE_VERBOSITY });
+    const pdf = await openPdf(new Uint8Array(buffer), { verbosity: PDF_PARSE_VERBOSITY });
     const { text } = await extractText(pdf, { mergePages: false });
     coverPageText = extractCoverPageText(text);
 

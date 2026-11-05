@@ -30,7 +30,8 @@
 
 import { readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import { extractImages, extractText, getDocumentProxy } from "unpdf";
+import { extractImages, extractText, type getDocumentProxy } from "unpdf";
+import { openPdf } from "./pdf-runtime";
 import {
   deriveSectionTitle,
   ensureMathSumPrecisePolyfill,
@@ -1429,7 +1430,7 @@ export async function processAddedModifiedFile(
 ): Promise<void> {
   const absolutePath = resolve(process.cwd(), filePath);
   const buffer = readFileSync(absolutePath);
-  const pdf = await getDocumentProxy(new Uint8Array(buffer), { verbosity: PDF_PARSE_VERBOSITY });
+  const pdf = await openPdf(new Uint8Array(buffer), { verbosity: PDF_PARSE_VERBOSITY });
   const { text } = await extractText(pdf, { mergePages: false });
 
   const chunks = buildManualChunks(filePath, text);

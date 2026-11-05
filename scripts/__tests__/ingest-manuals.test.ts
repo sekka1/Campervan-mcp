@@ -6,6 +6,7 @@ vi.mock("node:fs", () => ({
 
 vi.mock("unpdf", () => ({
   getDocumentProxy: vi.fn(async () => ({})),
+  definePDFJSModule: vi.fn(async () => undefined),
   extractText: vi.fn(async () => ({
     text: "Sample Manual Page 1. The heater operates on 12V DC power and requires proper ventilation.",
     totalPages: 1,
@@ -595,7 +596,10 @@ describe("processAddedModifiedFile", () => {
 
     await processAddedModifiedFile("tests/fixtures/sample-manual.pdf", "acct123", "token123", true);
 
-    expect(getDocumentProxy).toHaveBeenCalledWith(expect.any(Uint8Array), { verbosity: PDF_PARSE_VERBOSITY });
+    expect(getDocumentProxy).toHaveBeenCalledWith(expect.any(Uint8Array), {
+      verbosity: PDF_PARSE_VERBOSITY,
+      wasmUrl: expect.stringContaining("/wasm/"),
+    });
   });
 });
 
