@@ -154,14 +154,15 @@ model years appear in the grounding rules. Fields:
 
 | Field | Purpose |
 |---|---|
+| `answer_checklist` | **6 short imperative items, read first** (cautions first; approved method before options; show each item's purpose and never treat a list as an approval list; name gaps in numbered sequences; cite only what is retrieved; own advice last, methods only, never pick items from the documented list). Short on purpose: weaker models skim long rule paragraphs |
 | `strict_grounding_rule` | specs/dimensions/torque only if in chunks (pinned verbatim by tests; don't reword) |
 | `missing_manual_rule` | absent third-party component → no "typical" specs; consult its manual |
 | `powertrain_rule`, `powertrain_notice` | ICE default; notice when only BEV chunks matched |
 | `diagram_text_integrity` | callouts in text must match the embedded diagram; never embed BEV diagram for ICE |
 | `options_enumeration_rule` | broad questions → full inventory tables, no cherry-picking |
 | `schematic_rule` | always embed `schematic_url` as markdown image |
-| `evidence_rule` | **documented vs general-guidance labeling**; no invented section/page/part numbers; no external-standard numbers from memory (use `calculate_dc_wire_and_fuse`) |
-| `recommendation_rule` | carry through the manual's "use/type/rating" columns; only rank when a documented attribute supports it; never recommend items documented for another system (fuel, brake, airbag, HV…) for auxiliary loads |
+| `evidence_rule` | **documented vs general-guidance labeling**; no invented section/page/part numbers; no external-standard numbers from memory (use `calculate_dc_wire_and_fuse`); describe unretrieved content only as "not retrieved"; no unsupported absolutes; **inclusion in a table/list is not approval** |
+| `recommendation_rule` | carry through the manual's "use/type/rating" columns; only rank when a documented attribute supports it; never recommend items documented for another system (fuel, brake, airbag, HV…) for auxiliary loads; **own advice may describe methods but must not pick/rank/endorse items from a documented list** (if no approved method is retrieved: say so and describe creating a dedicated one) |
 | `completeness_and_warnings_rule` | say "as retrieved" and flag gaps; reproduce relevant CAUTION/WARNING/NOTE text first |
 
 Design intent: the LLM keeps freedom to explain, organize and add practical advice, but anything attributed to a
@@ -225,5 +226,31 @@ count as evidence because that tool result is in the trace.
 - **Limit (by design):** it proves *presence*, not *attribution*. A real number attached to the wrong rule (e.g. a relay
   rating quoted as a grounding limit) passes. The contract rules and the llm-rubric cover that; spot-check quotes
   with `local:sql`.
+- Part numbers are matched ignoring stray spaces around hyphens, because PDF extraction produces text like `KK2V- 14301-K`.
 - It flags inferred page ranges (e.g. citing "pp. 154–155" when only 154 was retrieved) — usually a true positive.
+
+### 8.2 Measuring contract compliance (do this before and after changing contract wording)
+
+Contract wording is a hypothesis; **models differ and vary run to run**, so measure instead of eyeballing one answer.
+`promptfoo.local-grounding.yaml` runs the real 2-turn loop against the **local** server with generic failure-class
+metrics (`grounding_check`, `no_approval_inference`, `no_item_picking`, `gaps_called_out`, `approved_method_first`).
+Start `pnpm local:server`, export the `.campervan-d1.env` values, run `pnpm eval:grounding` (4 repeats; use `--repeat 8`
+for tighter numbers), compare pass counts before/after, and read the per-run failure reasons.
+
+**Cost: use only the cheap repo-defined model for candidate AND judge** (`deepseek-ai/DeepSeek-V4-Flash-0731`; see
+AGENTS.md §0.2). The config strips the raw tool trace before the `llm-rubric` judge sees the output. A premium judge
+(`anthropic/claude-sonnet-4-6`, $3/$15 per 1M tokens) was once used here by mistake; never do that.
+
+Lessons recorded from the first measurements (cheap candidate model, grounding question; counts are runs passed, and the
+judge matters: the first pass used a stricter premium judge, the re-check used the cheap judge):
+- A short imperative `answer_checklist` lifted *gaps called out* from 2/4 to 8/8 (both judges) where the long rule
+  paragraphs alone were skipped half the time.
+- "Don't do X" alone did not stop a weaker model picking items from a list in its own advice (2/4); adding **a
+  replacement behaviour** (point to the approved method, or say none is documented) raised it to 6-8/8 depending on
+  the judge. It is still the least reliable metric, so expect residual misses from cheaper models.
+- `grounding_check` hits that remain are genuine (pages/sections cited but not retrieved, occasional invented
+  numeric spacings); the checker's own false positives (e.g. `KK2V- 14301-K` extraction spacing) were fixed generically.
+- Checker false positives are worth chasing, but fix the checker (generic normalization), not the model.
+- Weaker/cheaper models comply less; if a metric will not move with wording, use a stronger model for those clients
+  rather than adding more prompt text.
 

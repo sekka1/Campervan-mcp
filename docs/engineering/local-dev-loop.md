@@ -32,6 +32,7 @@ over the Cloudflare REST API. There is no local emulator for Vectorize, so this 
 | `pnpm local:sql "SELECT …" ['[param,…]']` | Runs SQL against dev D1 (inspect tags, chunk text, schematics). |
 | `pnpm local:server` | Serves the local Worker on `http://127.0.0.1:8787` (same JSON-RPC endpoint as production). |
 | `pnpm local:ask "<question>"` | With the server running: the promptfoo 2-turn loop (LLM → local MCP → LLM synthesis); prints the final answer, then a **grounding check** listing specs/sections/pages/part numbers/standards that no tool returned. `ASK_MODEL`, `SERVER_URL`, `SAVE=<file>` override/extend. |
+| `pnpm eval:grounding` | With the server running and `.campervan-d1.env` exported: promptfoo compliance measurement on local code (`promptfoo.local-grounding.yaml`, 4 repeats). See `retrieval-pipeline.md` §8.2. |
 | `BASE_URL=http://127.0.0.1:8787 pnpm test:live` | Runs the post-deploy smoke tests against local code. |
 | promptfoo | set `serverUrl: "http://127.0.0.1:8787"` in the provider config to evaluate local code. |
 
@@ -66,3 +67,10 @@ opener and nothing carried its ICE continuation. Fix: `promoteNonBevNeighbors` (
 Follow-ups from `local:ask` were fixed as *classes*, not cases: invented rules/numbers → `evidence_rule` + grounding checker; an
 item documented for another system recommended for add-on loads → purpose-matching `recommendation_rule`; a dropped opener's
 universal cautions → `extractNeutralSectionContext`. (This section is an example of the process, not a list of rules.)
+
+## Tips
+
+- To restart the local server after editing `src/`, stop the old process by PID (`ss -ltnp | grep :8787`) — `tsx` does not hot-reload.
+  Avoid `pkill -f`/`pgrep -f` patterns that appear in your own command line; they can kill your shell.
+- `pnpm eval:grounding` needs the environment variables from `.campervan-d1.env` in the shell (`set -a; . ./.campervan-d1.env; set +a`).
+

@@ -22,7 +22,8 @@
     "local:probe": "tsx --env-file=.campervan-d1.env local/probe.ts",
     "local:trace": "tsx --env-file=.campervan-d1.env local/trace.ts",
     "local:sql": "tsx --env-file=.campervan-d1.env local/sql.ts",
-    "local:ask": "tsx --env-file=.campervan-d1.env local/ask.ts"
+    "local:ask": "tsx --env-file=.campervan-d1.env local/ask.ts",
+    "eval:grounding": "npx -y promptfoo@0.125.1 eval -c promptfoo.local-grounding.yaml --repeat 4 --no-cache --no-table"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1098.0",
