@@ -1,11 +1,16 @@
 /**
  * End-to-end check: runs the same 2-turn tool loop as the promptfoo provider (candidate LLM -> local MCP
- * server -> LLM synthesis) and prints the final answer. Requires `local/server.ts` to be running.
+ * server -> LLM synthesis), prints the final answer, then runs the generic grounding checker on it
+ * (specs / sections / pages / part numbers / standards that no tool returned).
+ * Requires `local/server.ts` to be running.
  *
  * Usage: tsx --env-file=.campervan-d1.env local/ask.ts "<question>"
+ *   ASK_MODEL, SERVER_URL override defaults; SAVE=<file> stores the raw provider output (trace + answer).
  */
+import { writeFileSync } from "node:fs";
 // @ts-expect-error - plain .mjs provider without typings
 import Provider from "../scripts/promptfoo-mcp-provider.mjs";
+import { findUngroundedClaims, parseProviderOutput } from "../scripts/grounding-check.mjs";
 
 const question = process.argv[2] ?? "where are the grounding points for a 2024 Ford transit?";
 const provider = new Provider({
@@ -17,5 +22,14 @@ const provider = new Provider({
   },
 });
 const result = await provider.callApi(question);
-// Drop the raw "MCP Tool Result (...)" trace lines; keep the synthesized answer.
-console.log(String(result.output).split("\n").filter((l: string) => !l.startsWith("MCP Tool Result")).join("\n"));
+const output = String(result.output ?? result.error);
+if (process.env["SAVE"]) writeFileSync(process.env["SAVE"], output);
+
+const { answer, evidence, pages } = parseProviderOutput(output);
+console.log(answer);
+const bad = findUngroundedClaims({ answer, evidence, pages, question });
+console.log(
+  bad.length === 0
+    ? "\n--- grounding check: OK (all specs/sections/pages/parts/standards found in tool results)"
+    : `\n--- grounding check: ${bad.length} UNGROUNDED CLAIM(S): ${bad.map((c) => `${c.type}: ${c.claim}`).join("; ")}`
+);

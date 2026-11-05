@@ -31,7 +31,7 @@ over the Cloudflare REST API. There is no local emulator for Vectorize, so this 
 | `pnpm local:trace "<query>"` | Shows keyword / vector / fused rankings (page/tag) **before** hydration, BEV filtering and slicing. Use to find the stage that drops a chunk. |
 | `pnpm local:sql "SELECT …" ['[param,…]']` | Runs SQL against dev D1 (inspect tags, chunk text, schematics). |
 | `pnpm local:server` | Serves the local Worker on `http://127.0.0.1:8787` (same JSON-RPC endpoint as production). |
-| `pnpm local:ask "<question>"` | With the server running: the promptfoo 2-turn loop (LLM → local MCP → LLM synthesis); prints the final answer. `ASK_MODEL`, `SERVER_URL` override defaults. |
+| `pnpm local:ask "<question>"` | With the server running: the promptfoo 2-turn loop (LLM → local MCP → LLM synthesis); prints the final answer, then a **grounding check** listing specs/sections/pages/part numbers/standards that no tool returned. `ASK_MODEL`, `SERVER_URL`, `SAVE=<file>` override/extend. |
 | `BASE_URL=http://127.0.0.1:8787 pnpm test:live` | Runs the post-deploy smoke tests against local code. |
 | promptfoo | set `serverUrl: "http://127.0.0.1:8787"` in the provider config to evaluate local code. |
 
@@ -54,8 +54,8 @@ Work down; stop at the first stage that explains it.
 2. **Is it retrieved?** `pnpm local:trace "<question>"` — present in KEYWORD / VECTOR / FUSED?
 3. **Is it dropped afterwards?** `pnpm local:probe` — compare with FUSED. Candidates: non-BEV post-filter,
    dedup, `top_k` slice, filter relaxation (try with/without `model`, `model_year`, `market` filters).
-4. **Is the LLM misusing good chunks?** `pnpm local:ask` — compare the answer to chunk text; tighten the
-   *generic* contract (`buildBaseRetrievalContract`), not vehicle facts.
+4. **Is the LLM misusing good chunks?** `pnpm local:ask` — read the grounding-check line, compare the answer to chunk text; tighten the
+   *generic* contract (`buildBaseRetrievalContract`) or a mechanism, never vehicle facts (see `retrieval-pipeline.md` §8).
 5. Only after a code change is verified here: tests → PR. Re-ingest only if ingestion code/PDFs changed.
 
 ## Worked example (PR #74, grounding points)
@@ -63,5 +63,6 @@ Work down; stop at the first stage that explains it.
 `local:trace` showed the section opener p150 as the #1 fused hit; `local:probe` showed it absent from the output;
 SQL showed p150 `bev`, p151 `ice` (diagram), p152 `bev`, p153 `all` (table) → the BEV post-filter dropped the
 opener and nothing carried its ICE continuation. Fix: `promoteNonBevNeighbors` (see `retrieval-pipeline.md` §5).
-Follow-up from `local:ask`: the model invented rules and recommended fuel-tank-sender grounds → generic
-`evidence_rule` / `recommendation_rule` / `completeness_and_warnings_rule` added to the contract.
+Follow-ups from `local:ask` were fixed as *classes*, not cases: invented rules/numbers → `evidence_rule` + grounding checker; an
+item documented for another system recommended for add-on loads → purpose-matching `recommendation_rule`; a dropped opener's
+universal cautions → `extractNeutralSectionContext`. (This section is an example of the process, not a list of rules.)

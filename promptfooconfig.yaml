@@ -145,6 +145,8 @@ tests:
         value: "E185976b"
       - type: not-icontains
         value: "Megabrace"
+      - type: javascript
+        value: file://scripts/grounding-check.mjs:groundingAssertion
       - type: llm-rubric
         value: "The response must provide ground points for the ICE Transit (points 49–88) and must NOT use callout numbers or diagrams from the BEV diagram (Figure E185976b, points 1–45). Invokes search_van_manuals, identifies approved Ford Transit ground locations (such as the driver's seat pedestal/base ground stud or pillar ground points), and warns that auxiliary negatives must connect to designated chassis ground studs rather than connecting directly to the battery negative terminal or bypassing the Battery Monitoring Sensor (BMS)."
       - type: latency
@@ -165,8 +167,10 @@ tests:
         value: "E185976b"
       - type: not-icontains
         value: "Megabrace"
+      - type: javascript
+        value: file://scripts/grounding-check.mjs:groundingAssertion
       - type: llm-rubric
-        value: "Defaults to the ICE (gas/diesel) Transit without asking whether the user has an EV. Embeds or links the ICE ground point diagram (page 151, 'ICE Van, Wagon and Common Ground Points') and lists ICE ground points from the 49-88 table (page 153). Must NOT cite BEV callout numbers (1-48) or the BEV diagram E185976b, and must NOT say the diagram was unavailable or not extracted. Grounding: every statement attributed to the manual must be supported by retrieved text; any advice from general knowledge must be explicitly labeled as general guidance; must NOT quote numeric requirements from external standards (e.g. ABYC wire gauges) from memory; must NOT recommend a ground point whose documented use is another vehicle system (e.g. Fuel Tank Sender) for auxiliary loads; must present the manual's approved method for add-on loads (dedicated ground to body ground or battery negative spare stud) and note any gaps in the point numbering."
+        value: "Data regression for this platform: defaults to the ICE (gas/diesel) configuration without asking whether the user has an EV; embeds or links the ICE ground-point diagram (page 151) and lists ICE points from the 49-88 table (page 153); does not cite BEV callout numbers (1-48) or the BEV diagram, and does not say the diagram was unavailable. Generic grounding principles (apply to every platform and system): (1) statements attributed to the manual are supported by retrieved text; (2) advice from general knowledge is explicitly labeled as general guidance and contains no invented numeric specs or external-standard values; (3) the manual's own use/purpose column is shown, and no item documented for a different system or function is recommended for the user's add-on load; (4) the manual's approved method for add-on loads and its cautions/warnings are presented before the model's own advice; (5) gaps or missing items in a retrieved list are called out rather than the list being called complete."
       - type: latency
         threshold: 180000
 

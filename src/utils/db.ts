@@ -834,6 +834,42 @@ export async function hydrateChunks(
   return map;
 }
 
+/**
+ * Variant-neutral section notes.
+ *
+ * When a section opener is dropped because it is tagged for another variant (e.g. BEV for an ICE query),
+ * its CAUTION / WARNING / NOTE blocks are often still universally applicable ("use only the points indicated",
+ * "tighten to the specified torque"). This keeps the blocks that contain no variant-specific marker and drops:
+ *  - any sentence naming the other variant (BEV_CONTENT_REGEX),
+ *  - the rest of that block (later sentences usually depend on the dropped one), and
+ *  - non-prose text such as figure labels and table cells.
+ * Generic: it knows nothing about any vehicle or component. Returns "" when nothing qualifies.
+ */
+export function extractNeutralSectionContext(text: string | null | undefined, maxChars = 800): string {
+  if (!text) return "";
+  const cleaned = stripPageBoilerplate(text).replace(/\s+/g, " ");
+  const BLOCK = /^(?:CAUTIONS?|WARNINGS?|NOTES?|IMPORTANT)\s*:/;
+  const start = cleaned.search(/\b(?:CAUTIONS?|WARNINGS?|NOTES?|IMPORTANT)\s*:/);
+  if (start < 0) return "";
+
+  const kept: string[] = [];
+  let dropping = false;
+  for (const raw of cleaned.slice(start).split(/(?<=[.!?])\s+(?=[A-Z0-9])/)) {
+    const sentence = raw.trim();
+    if (BLOCK.test(sentence)) dropping = false;
+    if (BEV_CONTENT_REGEX.test(sentence)) {
+      dropping = true;
+      continue;
+    }
+    if (dropping) continue;
+    const words = sentence.split(/\s+/);
+    const proseWords = words.filter((w) => /^[A-Za-z][A-Za-z'’,;:()/-]*[.!?]?$/.test(w)).length;
+    if (words.length < 4 || proseWords / words.length < 0.7) continue;
+    kept.push(sentence);
+  }
+  return kept.join(" ").slice(0, maxChars).trim();
+}
+
 /** Numbered section headings such as "4.25 Grounding" or "4.25.1 Ground Points" (at least two levels). */
 const SECTION_HEADING_REGEX = /\b(\d{1,2}(?:\.\d{1,3}){1,3})\s+[A-Z][A-Za-z]/g;
 
@@ -911,6 +947,15 @@ export async function promoteNonBevNeighbors(
         ? chunk.section_title
         : null;
 
+      const sectionNotes = extractNeutralSectionContext(chunk.chunk_text);
+      const withNotes = (row: HydratedChunk): HydratedChunk =>
+        sectionNotes
+          ? {
+              ...row,
+              chunk_text: `[Section notes from the preceding p${chunk.page_number} opener (variant-specific sentences omitted)]: ${sectionNotes}\n\n${row.chunk_text}`,
+            }
+          : row;
+
       let promoted = 0;
       let insertAt = matches.findIndex((m) => m.id === match.id) + 1;
       for (const row of results ?? []) {
@@ -931,6 +976,7 @@ export async function promoteNonBevNeighbors(
           const [existing] = matches.splice(existingIdx, 1);
           existing!.score = Math.max(existing!.score, match.score - 0.001 * (promoted + 1));
           matches.splice(insertAt, 0, existing!);
+          if (promoted === 0 && hydrated.has(row.id)) hydrated.set(row.id, withNotes(hydrated.get(row.id)!));
         } else {
           const label =
             extractSectionNumbers(row.section_title).length > 0
@@ -938,7 +984,8 @@ export async function promoteNonBevNeighbors(
               : parentHeadingLabel
                 ? `${parentHeadingLabel} (continued on p${row.page_number})`
                 : row.section_title;
-          hydrated.set(row.id, { ...row, section_title: label });
+          const labelled = { ...row, section_title: label };
+          hydrated.set(row.id, promoted === 0 ? withNotes(labelled) : labelled);
           matches.splice(insertAt, 0, {
             id: row.id,
             score: match.score - 0.001 * (promoted + 1),

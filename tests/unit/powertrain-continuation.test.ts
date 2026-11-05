@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { promoteNonBevNeighbors, type HydratedChunk } from "../../src/utils/db.ts";
+import { promoteNonBevNeighbors, extractNeutralSectionContext, type HydratedChunk } from "../../src/utils/db.ts";
 
 const bevMeta = JSON.stringify({ fuel: "bev", powertrain: "bev" });
 const iceMeta = JSON.stringify({ fuel: "ice", powertrain: "ice" });
@@ -137,5 +137,44 @@ describe("promoteNonBevNeighbors", () => {
     await promoteNonBevNeighbors(mockDb([sub]), matches, hydrated);
 
     expect(hydrated.get("doc#chunk_2")!.section_title).toBe("4.25.2 Ground Torque");
+  });
+});
+
+describe("extractNeutralSectionContext", () => {
+  const opener =
+    "Date of Publication: 04/2024 ACME VAN & E-VAN 150 Electrical 4.25 Mounting 4.25.1 Anchor Points " +
+    "CAUTIONS: Only use the anchor points indicated. Using other points may affect integrity. " +
+    "Make sure every fastener is tightened to the correct torque. " +
+    "WARNING: Paths for High Voltage components on the E-VAN BEV must not be altered. " +
+    "This may require a welded stud on the body panel. " +
+    "NOTE: On E-VAN BEV applications create your own anchor. " +
+    "E185976b 22 2123 18 7 8 15 9 27 28 29 1 3 4 BEV Common Points";
+
+  it("keeps variant-neutral CAUTION prose and drops variant-specific blocks and figure labels", () => {
+    const notes = extractNeutralSectionContext(opener);
+    expect(notes).toContain("Only use the anchor points indicated.");
+    expect(notes).toContain("tightened to the correct torque.");
+    expect(notes).not.toMatch(/BEV|High Voltage|welded stud|E185976b|2123/);
+  });
+
+  it("returns an empty string when there are no CAUTION/WARNING/NOTE blocks", () => {
+    expect(extractNeutralSectionContext("4.25 Mounting plain descriptive text without any block keyword here")).toBe("");
+    expect(extractNeutralSectionContext(null)).toBe("");
+  });
+
+  it("is attached to the first promoted continuation only", async () => {
+    const parent = chunk("doc#chunk_1", 150, bevMeta, { section_title: "4.25 Mounting", chunk_text: opener });
+    const neighbours = [
+      chunk("doc#chunk_2", 151, iceMeta, { chunk_text: "figure labels 49 50 51" }),
+      chunk("doc#chunk_3", 153, iceMeta, { chunk_text: "table rows" }),
+    ];
+    const matches = [{ id: parent.id, score: 0.8, metadata: { source: "s", text: "" } }];
+    const hydrated = new Map([[parent.id, parent]]);
+
+    await promoteNonBevNeighbors(mockDb(neighbours), matches, hydrated);
+
+    expect(hydrated.get("doc#chunk_2")!.chunk_text).toContain("Only use the anchor points indicated.");
+    expect(hydrated.get("doc#chunk_2")!.chunk_text).toContain("preceding p150 opener");
+    expect(hydrated.get("doc#chunk_3")!.chunk_text).toBe("table rows");
   });
 });

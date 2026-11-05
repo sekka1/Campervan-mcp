@@ -5,9 +5,11 @@
 > To reproduce/debug retrieval against real data without deploying, see
 > [`local-dev-loop.md`](./local-dev-loop.md).
 
-Everything here is **vehicle- and component-agnostic by design** (AGENTS.md §1–2). The Ford Transit
-2024 grounding example is used throughout only as a worked case study, because it exercised every
-part of the pipeline. Sprinter, ProMaster/Ram, Victron, HVAC, plumbing, etc. go through the same code.
+Everything here is **vehicle- and component-agnostic by design** (AGENTS.md §1–2). Specific manuals
+(e.g. the 2024 Ford Transit grounding section) appear only as **worked examples** of a *class* of problem,
+always labeled as such. Sprinter, Ram/ProMaster, Victron, HVAC, air, water, plumbing, etc. go through the same
+code and the same contract. If you are about to write a rule that names a page, part, vehicle or circuit,
+stop and read §8 (Generic-first).
 
 ---
 
@@ -107,9 +109,20 @@ replaced them, and p151's numeric-only text never ranked on its own.
 - Promoted chunks get the label `"<parent heading> (continued on p<N>)"` unless they carry their own real heading.
 - Runs before the sort, so `top_k` and BEV filtering still apply afterwards.
 
+### 5.1 Variant-neutral section notes (`extractNeutralSectionContext`)
+
+Same class of problem, second half: the dropped opener also carried CAUTION/WARNING/NOTE text that applies to *every*
+variant. Rather than keep the BEV page (and its BEV callouts) or lose the cautions, the first promoted chunk gets a
+prefix `[Section notes from the preceding p<N> opener (variant-specific sentences omitted)]: …` built by:
+keep CAUTION/WARNING/NOTE/IMPORTANT blocks; drop any sentence matching the other variant's markers
+(`BEV_CONTENT_REGEX`) **and the rest of that block** (later sentences usually depend on it); drop non-prose
+(figure labels, table cells). It works on any manual that has variant-tagged openers (diesel vs electric, 12 V vs 48 V
+if markers are added, etc.) and never injects variant-specific callouts, so `diagram_text_integrity` still holds.
+*Example outcome:* a "use only the indicated points / tighten to torque" caution survives for the ICE answer while the
+"on the electric version create your own point" note does not.
+
 **Known limitations / future work (deliberately not done):**
-- The BEV opener's own prose (e.g. Transit p150 "Only use the ground points indicated…") is still dropped for
-  ICE queries. Option: attach a stripped `section_intro` to the first promoted chunk, clearly marked BEV-tagged.
+- (Resolved) A dropped opener's variant-neutral CAUTION/WARNING/NOTE prose is now preserved — see §5.1.
 - Keyword stage is noisy: tokens like `ford`/`transit`/`2024` match every page header. Consider stripping tokens
   that equal the document's own title/filter terms.
 - `searchManuals` (`src/utils/db.ts`) catches Vectorize errors and returns **mock results**, and
@@ -158,3 +171,45 @@ recommended fuel-tank-sender ground points for house loads.
 Known env-only test failures: ~14 schematic/PDF-rendering e2e tests (`ingest-pipeline`, `r2-pipeline`,
 `schematics-pipeline`, `scripts/__tests__/schematics`) fail on aarch64/Android dev boxes with and without changes
 (canvas/PDF rendering + 5 s timeouts). Rely on CI for those.
+
+## 8. Generic-first: how to handle the next corner case
+
+Every platform and system (chassis, batteries, HVAC, air, water, plumbing) will surface odd cases. **Do not add a
+rule that names the page, part, vehicle or circuit you just saw.** Classify the failure instead, and fix the class:
+
+| Failure class (examples) | Fix at this layer | Existing generic mechanism |
+|---|---|---|
+| Relevant content never reaches the model (section split across pages/variants, diagram-only page, numeric-only table) | **Retrieval mechanism** | `hydrateChunks` continuation, `promoteNonBevNeighbors` (section-continuity aware), `extractNeutralSectionContext` |
+| Content wrongly tagged / filtered | **Ingestion classifier** (pure function of text) + data check | `classifyPowertrainText`, `stripPageBoilerplate`; verify with `local:sql` first |
+| Model states things the manuals don't say | **Contract principle** + deterministic check | `evidence_rule`, `scripts/grounding-check.mjs` |
+| Model recommends something unsafe/irrelevant to the user's goal | **Contract principle** (purpose-matching), never an item list | `recommendation_rule` |
+| Model overstates completeness or skips warnings | **Contract principle** | `completeness_and_warnings_rule` |
+| Math / unit / table lookup errors | **Deterministic code** | `src/utils/formulas.ts` + tests |
+
+Rules of thumb:
+1. **Examples ≠ rules.** Put the concrete case in a *test fixture or promptfoo case* (labeled as a regression/example),
+   and the *principle* in the mechanism or contract. Tests for generic code should use neutral synthetic text
+   (see `tests/unit/powertrain-continuation.test.ts`, `scripts/__tests__/grounding-check.test.ts`).
+2. **Prefer mechanisms over lists.** "Don't recommend fuel-tank grounds" is a one-off; "don't recommend an item whose
+   documented purpose differs from the user's intended use, and show the purpose column" covers fuel, brakes, airbags,
+   potable vs. waste water, gas vs. vent paths, sensor circuits, … on every platform.
+3. **Prefer deterministic checks over more prompt text.** If a class of error can be detected mechanically (invented
+   numbers, citations, part numbers, standards), detect it in code and assert on it in promptfoo.
+4. **Keep the generic contract test green:** `tests/unit/retrieval-contract.test.ts` rejects vehicle/brand names and
+   model years in the grounding rules.
+5. Record *what the class was and which mechanism now covers it* in this document (not the one-off specifics).
+
+### 8.1 Deterministic grounding checker (`scripts/grounding-check.mjs`)
+
+Given a provider output (tool-result trace + synthesized answer) it extracts checkable claims — numeric specs with
+units, `Section x.y.z`, page references (range endpoints), part/figure numbers, named standards (ABYC, NEC, ISO, SAE…)
+— and reports those that appear in **no tool result** (and not in the user's question). The `retrieval_contract` text is
+excluded from evidence on purpose (it names standards as examples). Numbers computed by `calculate_dc_wire_and_fuse`
+count as evidence because that tool result is in the trace.
+- Use it: `pnpm local:ask` prints `grounding check: …` after every answer; promptfoo uses
+  `type: javascript` / `file://scripts/grounding-check.mjs:groundingAssertion` (currently on the grounding tests).
+- **Limit (by design):** it proves *presence*, not *attribution*. A real number attached to the wrong rule (e.g. a relay
+  rating quoted as a grounding limit) passes. The contract rules and the llm-rubric cover that; spot-check quotes
+  with `local:sql`.
+- It flags inferred page ranges (e.g. citing "pp. 154–155" when only 154 was retrieved) — usually a true positive.
+

@@ -13,9 +13,9 @@ Do **not** re-derive how retrieval works or how to test it. Read these first:
 
 Hard-won rules (details in those docs):
 1. **Diagnose with data before changing code.** Check stored tags/pages (`pnpm local:sql`) and the stage at which a chunk is lost (`pnpm local:trace`). Re-ingesting does not change powertrain tags unless the classifier code changed.
-2. **Fix retrieval generically.** No vehicle-, model-year- or component-specific logic or contract text (a unit test enforces this for the grounding rules). Sprinter, Ram/ProMaster, batteries, HVAC and plumbing must all work through the same code.
+2. **Generic-first (examples are not rules).** Never add logic, contract text or prompts that name a page, part, vehicle, model year or circuit you just saw (a unit test enforces this for the grounding rules). Classify the failure and fix the *class* with a mechanism, a contract principle or a deterministic check — see `retrieval-pipeline.md` §8. Concrete cases belong only in labeled test fixtures/promptfoo regressions. Sprinter, Ram/ProMaster, batteries, HVAC, air and water systems must all work through the same code.
 3. **LLM freedom, grounded.** The retrieval contract (`buildBaseRetrievalContract()` in `src/tools/manuals.ts`, single source) lets the model explain and advise, but anything attributed to a manual must come from retrieved chunks, and all other advice must be labeled "General guidance (not from the indexed manuals)". Extend the builder, not inline copies.
-4. **Verify the synthesized answer**, not just retrieval: `pnpm local:ask`, then spot-check quoted claims against D1 text.
+4. **Verify the synthesized answer**, not just retrieval: `pnpm local:ask` (it runs `scripts/grounding-check.mjs`, which flags specs/sections/pages/part numbers/standards no tool returned), then spot-check quoted claims against D1 text. The checker proves presence, not attribution.
 5. `.campervan-d1.env` holds real credentials: never commit it, print it, or paste its contents.
 
 ---
