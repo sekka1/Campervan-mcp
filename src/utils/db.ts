@@ -834,6 +834,126 @@ export async function hydrateChunks(
   return map;
 }
 
+/** Numbered section headings such as "4.25 Grounding" or "4.25.1 Ground Points" (at least two levels). */
+const SECTION_HEADING_REGEX = /\b(\d{1,2}(?:\.\d{1,3}){1,3})\s+[A-Z][A-Za-z]/g;
+
+/** Numbered headings found in a chunk's own text (page boilerplate removed), in order. */
+export function extractSectionNumbers(text: string | null | undefined): string[] {
+  if (!text) return [];
+  return Array.from(stripPageBoilerplate(text).matchAll(SECTION_HEADING_REGEX), (m) => m[1]!);
+}
+
+/** "4.25.1" -> "4.25": the top two levels identify the section a chunk belongs to. */
+function sectionRoot(num: string): string {
+  return num.split(".").slice(0, 2).join(".");
+}
+
+/**
+ * Powertrain-aware section continuation.
+ *
+ * A manual section can open on a page tagged BEV (its intro text names the BEV figure) while the
+ * ICE figure and table that complete the section sit on the following pages. For a non-BEV query
+ * the BEV parent is later dropped, which would also lose its ICE continuation (stitching refuses to
+ * cross powertrains). So for the top-ranked BEV chunks we promote their non-BEV neighbours from the
+ * next few pages, inserting them immediately after the parent so they inherit its rank even when the
+ * final comparator treats peers as ties.
+ *
+ * Section continuity: walking forward page by page, we stop at the first neighbour whose text starts
+ * a numbered heading outside the parent's section (or any numbered heading, if the parent's section
+ * cannot be determined), so an unrelated section never inherits the parent's rank or label.
+ * Neighbours that are already candidates are moved up next to the parent instead of duplicated.
+ * Mutates `matches` and `hydrated`.
+ */
+export async function promoteNonBevNeighbors(
+  db: D1Database,
+  matches: ManualChunk[],
+  hydrated: Map<string, HydratedChunk>,
+  opts: { maxParents?: number; pageWindow?: number; maxPerParent?: number } = {}
+): Promise<void> {
+  const maxParents = opts.maxParents ?? 3;
+  const pageWindow = opts.pageWindow ?? 3;
+  const maxPerParent = opts.maxPerParent ?? 3;
+
+  const parents = matches
+    .slice(0, maxParents)
+    .map((m) => ({ match: m, chunk: hydrated.get(m.id) }))
+    .filter((p): p is { match: ManualChunk; chunk: HydratedChunk } => {
+      return Boolean(p.chunk) && extractChunkFuelType(p.chunk!) === "bev";
+    });
+
+  for (const { match, chunk } of parents) {
+    try {
+      const { results } = await db
+        .prepare(
+          `SELECT c.id, c.document_id, d.title AS document_title,
+                  COALESCE(c.category, d.category) AS category,
+                  COALESCE(c.manufacturer, d.manufacturer) AS manufacturer,
+                  d.applicable_chassis, c.page_number, c.section_title, c.subsystem, c.chunk_text,
+                  s.r2_key AS schematic_r2_key, s.caption AS schematic_caption,
+                  COALESCE(c.model, d.model) AS model,
+                  COALESCE(c.market, d.market) AS market,
+                  COALESCE(c.metadata_json, d.metadata_json) AS metadata_json
+           FROM document_chunks c
+           JOIN documents d ON d.id = c.document_id
+           LEFT JOIN schematic_images s ON s.id = c.schematic_image_id
+           WHERE c.document_id = ? AND c.page_number > ? AND c.page_number <= ?
+           ORDER BY c.page_number, c.id`
+        )
+        .bind(chunk.document_id, chunk.page_number, chunk.page_number + pageWindow)
+        .all<HydratedChunk>();
+
+      // Prefer the parent's own heading; fall back to the first heading in its text (later numbers are
+      // usually cross-references such as "Refer to: 5.1.2 Welding").
+      const parentNumber =
+        extractSectionNumbers(chunk.section_title)[0] ?? extractSectionNumbers(chunk.chunk_text)[0];
+      const parentRoot = parentNumber ? sectionRoot(parentNumber) : null;
+      const parentHeadingLabel = chunk.section_title && extractSectionNumbers(chunk.section_title).length > 0
+        ? chunk.section_title
+        : null;
+
+      let promoted = 0;
+      let insertAt = matches.findIndex((m) => m.id === match.id) + 1;
+      for (const row of results ?? []) {
+        if (promoted >= maxPerParent) break;
+
+        const headings = extractSectionNumbers(row.chunk_text);
+        const leavesSection = parentRoot
+          ? headings.some((h) => sectionRoot(h) !== parentRoot)
+          : headings.length > 0;
+        if (leavesSection) break; // section boundary: nothing further belongs to the parent
+
+        if (extractChunkFuelType(row) === "bev") continue;
+
+        const existingIdx = matches.findIndex((m) => m.id === row.id);
+        if (existingIdx !== -1) {
+          // Already a candidate (possibly ranked below top_k): move it up beside the parent.
+          if (existingIdx < insertAt) continue;
+          const [existing] = matches.splice(existingIdx, 1);
+          existing!.score = Math.max(existing!.score, match.score - 0.001 * (promoted + 1));
+          matches.splice(insertAt, 0, existing!);
+        } else {
+          const label =
+            extractSectionNumbers(row.section_title).length > 0
+              ? row.section_title
+              : parentHeadingLabel
+                ? `${parentHeadingLabel} (continued on p${row.page_number})`
+                : row.section_title;
+          hydrated.set(row.id, { ...row, section_title: label });
+          matches.splice(insertAt, 0, {
+            id: row.id,
+            score: match.score - 0.001 * (promoted + 1),
+            metadata: { ...match.metadata },
+          });
+        }
+        insertAt++;
+        promoted++;
+      }
+    } catch (err) {
+      console.warn("Non-BEV neighbour promotion failed:", err);
+    }
+  }
+}
+
 export interface HybridSearchResult {
   id: string;
   score: number;
@@ -967,6 +1087,11 @@ export async function hybridSearch(
         model_year: options.model_year,
       })
     : new Map<string, HydratedChunk>();
+
+  // Powertrain-aware continuation: keep the ICE figure/table that completes a BEV-tagged section opener.
+  if (db && !queryContainsBevIndicators(options.queryText)) {
+    await promoteNonBevNeighbors(db, matches, hydrated);
+  }
 
   const hasFilters = Boolean(
     options.category ||
