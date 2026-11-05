@@ -1030,6 +1030,34 @@ export const COMBUSTION_MARKER_REGEX =
   /\b(ice|gas|gasoline|diesel|alternator|om654|ecoboost)\b/i;
 
 /**
+ * Page header/footer boilerplate that repeats on every page of a manual and must never count as
+ * powertrain evidence: the "Abc = BEV Only  Abc = ICE Only" legend and "<MODEL> & E-<MODEL>" banners.
+ */
+const PAGE_BOILERPLATE_REGEXES: ReadonlyArray<RegExp> = [
+  /\bAbc\s*=\s*[A-Za-z]+\s+Only\b/gi,
+  /\b(\w+)\s*&\s*E-?\1(?![A-Za-z])/gi,
+];
+
+export function stripPageBoilerplate(text: string): string {
+  return PAGE_BOILERPLATE_REGEXES.reduce((acc, re) => acc.replace(re, " "), text);
+}
+
+/**
+ * Classifies a chunk's powertrain from its own content (page boilerplate removed).
+ * Only BEV markers -> "bev"; only combustion markers -> "ice"; BOTH -> "all" (shared / mixed content);
+ * neither -> undefined (caller decides the default).
+ */
+export function classifyPowertrainText(text: string): "bev" | "ice" | "all" | undefined {
+  const cleaned = stripPageBoilerplate(text);
+  const hasBev = BEV_MARKER_REGEX.test(cleaned);
+  const hasIce = COMBUSTION_MARKER_REGEX.test(cleaned);
+  if (hasBev && hasIce) return "all";
+  if (hasBev) return "bev";
+  if (hasIce) return "ice";
+  return undefined;
+}
+
+/**
  * Builds D1 SQL statements to replace a document's chunks. Chunks are keyed by
  * vector ID, and each chunk links to the first schematic image on its page.
  */
@@ -1063,12 +1091,18 @@ ON CONFLICT(id) DO UPDATE SET title = excluded.title, category = excluded.catego
   ];
 
   // Gather page-level BEV text evidence across chunks to accurately classify diagrams on the same page
-  const pageHasBev = new Set<number>();
+  // A page counts as BEV only if its content is BEV-only; mixed pages (both powertrains) are ambiguous.
+  const pageFuels = new Map<number, Set<string>>();
   for (const chunk of chunks) {
-    const combined = `${chunk.sectionTitle || ""} ${chunk.text}`.toLowerCase();
-    if (BEV_MARKER_REGEX.test(combined)) {
-      pageHasBev.add(chunk.pageNumber);
-    }
+    const f = classifyPowertrainText(`${chunk.sectionTitle || ""} ${chunk.text}`);
+    if (!f) continue;
+    const set = pageFuels.get(chunk.pageNumber) ?? new Set<string>();
+    set.add(f);
+    pageFuels.set(chunk.pageNumber, set);
+  }
+  const pageHasBev = new Set<number>();
+  for (const [pg, set] of pageFuels) {
+    if (set.has("bev") && !set.has("ice") && !set.has("all")) pageHasBev.add(pg);
   }
 
   // Create map of images by page and their detected powertrain
@@ -1076,7 +1110,7 @@ ON CONFLICT(id) DO UPDATE SET title = excluded.title, category = excluded.catego
   for (const image of images) {
     const isBevImage =
       pageHasBev.has(image.pageNumber) ||
-      BEV_MARKER_REGEX.test(`${image.caption ?? ""} ${image.r2Key ?? ""}`);
+      classifyPowertrainText(`${image.caption ?? ""} ${image.r2Key ?? ""}`) === "bev";
     const existing = imagesByPage.get(image.pageNumber) || [];
     existing.push({ id: image.id, isBev: isBevImage });
     imagesByPage.set(image.pageNumber, existing);
@@ -1096,15 +1130,9 @@ ON CONFLICT(id) DO UPDATE SET document_id = excluded.document_id, page_number = 
     const combinedChunkText = `${chunk.sectionTitle || ""} ${chunk.text}`.toLowerCase();
 
     // Automated Powertrain Tagging for chunks:
-    let chunkFuel: "bev" | "ice" | "all" = "all";
-    if (BEV_MARKER_REGEX.test(combinedChunkText)) {
-      chunkFuel = "bev";
-    } else if (
-      COMBUSTION_MARKER_REGEX.test(combinedChunkText) ||
-      doc.applicableChassis !== "universal"
-    ) {
-      chunkFuel = "ice";
-    }
+    let chunkFuel: "bev" | "ice" | "all" =
+      classifyPowertrainText(combinedChunkText) ??
+      (doc.applicableChassis !== "universal" ? "ice" : "all");
 
     // Merge with parent document metadata_json
     let chunkMetaPouch: Record<string, unknown> = {};
