@@ -834,6 +834,79 @@ export async function hydrateChunks(
   return map;
 }
 
+/**
+ * Powertrain-aware section continuation.
+ *
+ * A manual section can open on a page tagged BEV (its intro text names the BEV figure) while the
+ * ICE figure and table that complete the section sit on the following pages. For a non-BEV query
+ * the BEV parent is later dropped, which would also lose its ICE continuation (stitching refuses to
+ * cross powertrains). So for the top-ranked BEV chunks we promote their non-BEV neighbours from the
+ * next few pages into the candidate set, inheriting the parent's rank and section title.
+ * Mutates `matches` and `hydrated`.
+ */
+export async function promoteNonBevNeighbors(
+  db: D1Database,
+  matches: ManualChunk[],
+  hydrated: Map<string, HydratedChunk>,
+  opts: { maxParents?: number; pageWindow?: number; maxPerParent?: number } = {}
+): Promise<void> {
+  const maxParents = opts.maxParents ?? 3;
+  const pageWindow = opts.pageWindow ?? 3;
+  const maxPerParent = opts.maxPerParent ?? 3;
+
+  const parents = matches
+    .slice(0, maxParents)
+    .map((m) => ({ match: m, chunk: hydrated.get(m.id) }))
+    .filter((p): p is { match: ManualChunk; chunk: HydratedChunk } => {
+      return Boolean(p.chunk) && extractChunkFuelType(p.chunk!) === "bev";
+    });
+
+  for (const { match, chunk } of parents) {
+    try {
+      const { results } = await db
+        .prepare(
+          `SELECT c.id, c.document_id, d.title AS document_title,
+                  COALESCE(c.category, d.category) AS category,
+                  COALESCE(c.manufacturer, d.manufacturer) AS manufacturer,
+                  d.applicable_chassis, c.page_number, c.section_title, c.subsystem, c.chunk_text,
+                  s.r2_key AS schematic_r2_key, s.caption AS schematic_caption,
+                  COALESCE(c.model, d.model) AS model,
+                  COALESCE(c.market, d.market) AS market,
+                  COALESCE(c.metadata_json, d.metadata_json) AS metadata_json
+           FROM document_chunks c
+           JOIN documents d ON d.id = c.document_id
+           LEFT JOIN schematic_images s ON s.id = c.schematic_image_id
+           WHERE c.document_id = ? AND c.page_number > ? AND c.page_number <= ?
+           ORDER BY c.page_number, c.id`
+        )
+        .bind(chunk.document_id, chunk.page_number, chunk.page_number + pageWindow)
+        .all<HydratedChunk>();
+
+      let promoted = 0;
+      for (const row of results ?? []) {
+        if (promoted >= maxPerParent) break;
+        if (hydrated.has(row.id)) continue;
+        if (extractChunkFuelType(row) === "bev") continue;
+
+        hydrated.set(row.id, {
+          ...row,
+          section_title: chunk.section_title
+            ? `${chunk.section_title} (continued on p${row.page_number})`
+            : row.section_title,
+        });
+        promoted++;
+        matches.push({
+          id: row.id,
+          score: match.score - 0.001 * promoted,
+          metadata: { ...match.metadata },
+        });
+      }
+    } catch (err) {
+      console.warn("Non-BEV neighbour promotion failed:", err);
+    }
+  }
+}
+
 export interface HybridSearchResult {
   id: string;
   score: number;
@@ -967,6 +1040,11 @@ export async function hybridSearch(
         model_year: options.model_year,
       })
     : new Map<string, HydratedChunk>();
+
+  // Powertrain-aware continuation: keep the ICE figure/table that completes a BEV-tagged section opener.
+  if (db && !queryContainsBevIndicators(options.queryText)) {
+    await promoteNonBevNeighbors(db, matches, hydrated);
+  }
 
   const hasFilters = Boolean(
     options.category ||

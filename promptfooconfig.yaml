@@ -150,6 +150,26 @@ tests:
       - type: latency
         threshold: 180000
 
+  # Test 4b: Plain-language grounding question must default to ICE and surface the ICE diagram + table
+  # (regression: BEV-tagged section opener on p150 used to drop its ICE continuation on p151/p153)
+  - vars:
+      question: "where are the grounding points for a 2024 Ford transit?"
+    assert:
+      - type: contains
+        value: "search_van_manuals"
+      - type: contains
+        value: "p151-0.png"
+      - type: icontains
+        value: "49"
+      - type: not-contains
+        value: "E185976b"
+      - type: not-icontains
+        value: "Megabrace"
+      - type: llm-rubric
+        value: "Defaults to the ICE (gas/diesel) Transit without asking whether the user has an EV. Embeds or links the ICE ground point diagram (page 151, 'ICE Van, Wagon and Common Ground Points') and lists ICE ground points from the 49-88 table (page 153). Must NOT cite BEV callout numbers (1-48) or the BEV diagram E185976b, and must NOT say the diagram was unavailable or not extracted."
+      - type: latency
+        threshold: 180000
+
   # Test 5: Dynamic Retrieval Contract & Anti-Fabrication for Absent Manuals
   - vars:
       question: "What is the exact torque specification and bolt size for mounting the XYZ-999 generic auxiliary Chinese diesel water pump?"
