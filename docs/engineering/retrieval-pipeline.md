@@ -239,7 +239,8 @@ for tighter numbers), compare pass counts before/after, and read the per-run fai
 
 **Cost: use only the cheap repo-defined model for candidate AND judge** (`deepseek-ai/DeepSeek-V4-Flash-0731`; see
 AGENTS.md §0.2). The config strips the raw tool trace before the `llm-rubric` judge sees the output. A premium judge
-(`anthropic/claude-sonnet-4-6`, $3/$15 per 1M tokens) was once used here by mistake; never do that.
+(`anthropic/claude-sonnet-4-6`, $3/$15 per 1M tokens) was once used here, including as the main benchmark's grader;
+it has been replaced everywhere. Never reintroduce it.
 
 Lessons recorded from the first measurements (cheap candidate model, grounding question; counts are runs passed, and the
 judge matters: the first pass used a stricter premium judge, the re-check used the cheap judge):

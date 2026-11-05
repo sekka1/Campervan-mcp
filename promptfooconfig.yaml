@@ -22,10 +22,12 @@ providers:
       apiBaseUrl: "https://api.deepinfra.com/v1/openai"
       apiKeyEnvar: "DEEPINFRA_TOKEN"
 
+# COST GUARDRAIL: the rubric judge uses a cheap repo-defined model (AGENTS.md section 0.2). Do not switch it to
+# a premium model (e.g. anthropic/claude-sonnet-4-6 is $3/$15 per 1M tokens on DeepInfra).
 defaultTest:
   options:
     provider:
-      id: "openai:chat:anthropic/claude-sonnet-4-6"
+      id: "openai:chat:deepseek-ai/DeepSeek-V4-Flash-0731"
       config:
         apiBaseUrl: "https://api.deepinfra.com/v1/openai"
         apiKeyEnvar: "DEEPINFRA_TOKEN"
