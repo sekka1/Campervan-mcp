@@ -127,6 +127,23 @@ export interface RetrievalContract {
   options_enumeration_rule: string;
   schematic_rule: string;
   no_matches_guidance?: string;
+  /** Set when a non-BEV query only matched BEV-tagged chunks. */
+  powertrain_notice?: string;
+}
+
+/** Notice attached when an ICE-default query could only retrieve BEV-tagged chunks. */
+export const BEV_ONLY_FALLBACK_NOTICE =
+  "NO ICE MATCH FOUND: Every retrieved chunk is tagged BEV / electric (E-Transit, etc.) and the query did not ask for an electric vehicle. State clearly that the indexed ICE (gas/diesel) content for this topic was not retrieved, and that the results below describe the BEV configuration only. Do NOT present BEV callout numbers, ratings, or diagrams as applying to an ICE vehicle.";
+
+export function isBevOnlyFallback(
+  query: string,
+  results: ReadonlyArray<object>
+): boolean {
+  return (
+    results.length > 0 &&
+    !queryContainsBevIndicators(query) &&
+    results.every((r) => (r as { fuel_type?: string }).fuel_type === "bev")
+  );
 }
 
 export interface SearchVanManualsResponse {
@@ -382,6 +399,7 @@ IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
           "BROAD QUERY ENUMERATION: When an inquiry is open-ended (e.g., available ground locations, power taps, or mounting zones), do not group items into vague ranges or pick a single favorite. Present a structured, complete inventory of all documented options from the retrieved chunks using compact Markdown tables with their key differentiating parameters (Location, Stud/Thread Spec, Max Rating, Constraints).",
         schematic_rule:
           "MANDATORY DIAGRAMS: Whenever a chunk contains a 'schematic_url', you MUST embed it inline in your markdown response using: ![<Diagram Title>](<schematic_url>).",
+        ...(isBevOnlyFallback(args.query, results) ? { powertrain_notice: BEV_ONLY_FALLBACK_NOTICE } : {}),
       };
 
       const payload = {
@@ -649,7 +667,9 @@ export async function searchVanManuals(
       count: searchResults.length,
       matches_found: true,
       filter_applied: filterOptions,
-      retrieval_contract: baseContract,
+      retrieval_contract: isBevOnlyFallback(query, searchResults)
+        ? { ...baseContract, powertrain_notice: BEV_ONLY_FALLBACK_NOTICE }
+        : baseContract,
     },
     results: searchResults,
   };

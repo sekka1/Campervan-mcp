@@ -292,6 +292,16 @@ export const COMBUSTION_CONTENT_REGEX =
   /\b(ice|gas|gasoline|diesel|alternator|om654|ecoboost)\b/i;
 
 /**
+ * Repeating page header/footer text (e.g. "Abc = BEV Only  Abc = ICE Only" legends and
+ * "TRANSIT & E-TRANSIT" banners) that must not count as powertrain evidence.
+ */
+export function stripPageBoilerplate(text: string): string {
+  return text
+    .replace(/\bAbc\s*=\s*[A-Za-z]+\s+Only\b/gi, " ")
+    .replace(/\b(\w+)\s*&\s*E-?\1(?![A-Za-z])/gi, " ");
+}
+
+/**
  * Extracts fuel / powertrain classification from chunk metadata or text.
  * Returns 'bev' if electric, 'ice' if internal combustion, or undefined if neutral/universal.
  */
@@ -308,6 +318,8 @@ export function extractChunkFuelType(chunk: {
         const fuel = String(meta.fuel).toLowerCase().trim();
         if (fuel === "bev" || fuel === "electric") return "bev";
         if (fuel === "ice" || fuel === "gas" || fuel === "gasoline" || fuel === "diesel") return "ice";
+        // Explicitly shared / mixed content: powertrain-neutral, do not infer from text.
+        if (fuel === "all") return undefined;
       }
       if (meta?.powertrain) {
         const pt = String(meta.powertrain).toLowerCase().trim();
@@ -318,7 +330,7 @@ export function extractChunkFuelType(chunk: {
   }
 
   // Check document title or source name
-  const title = `${chunk.document_title || ""} ${chunk.source || ""}`.toLowerCase();
+  const title = stripPageBoilerplate(`${chunk.document_title || ""} ${chunk.source || ""}`).toLowerCase();
   if (
     title.includes("e-transit") ||
     title.includes("etransit") ||
@@ -331,8 +343,12 @@ export function extractChunkFuelType(chunk: {
 
   // Check chunk text for explicit propulsion markers if present
   if (chunk.chunk_text) {
-    if (BEV_CONTENT_REGEX.test(chunk.chunk_text)) return "bev";
-    if (COMBUSTION_CONTENT_REGEX.test(chunk.chunk_text)) return "ice";
+    const cleaned = stripPageBoilerplate(chunk.chunk_text);
+    const hasBev = BEV_CONTENT_REGEX.test(cleaned);
+    const hasIce = COMBUSTION_CONTENT_REGEX.test(cleaned);
+    if (hasBev && hasIce) return undefined; // mixed content is powertrain-neutral
+    if (hasBev) return "bev";
+    if (hasIce) return "ice";
   }
 
   return undefined;
