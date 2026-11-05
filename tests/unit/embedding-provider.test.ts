@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   generateEmbeddings,
+  collapseFillerRuns,
   EMBEDDING_DIMENSION,
   DEEPINFRA_EMBEDDING_ENDPOINT,
   EMBEDDING_MODEL,
@@ -165,6 +166,68 @@ describe("Embedding Provider Switch (DeepInfra / Cloudflare)", () => {
       expect(secondCallBody!.inputs[0].length).toBeLessThanOrEqual(600);
       expect(vectors).toHaveLength(1);
       expect(vectors[0]).toHaveLength(768);
+    });
+
+    describe("filler runs (table-of-contents dot leaders) and the 512-token limit", () => {
+      const tocLine = (n: number) => `4.${n}.1 Some Section Title ${".".repeat(70)} ${100 + n}`;
+      const tokenError = JSON.stringify({
+        detail: "You passed 513 input tokens and requested 0 output tokens. However, the model context length is only 512 tokens.",
+      });
+
+      it("collapseFillerRuns shortens leaders and rules but leaves normal text alone", () => {
+        expect(collapseFillerRuns(`Title ${".".repeat(80)} 63`)).toBe("Title ... 63");
+        expect(collapseFillerRuns(`${"-".repeat(30)} ${"_".repeat(12)} ${"=".repeat(9)}`)).toBe("--- ___ ===");
+        expect(collapseFillerRuns("Title . . . . . . . . 63")).toBe("Title . . . 63");
+        const normal = "Torque 8.85 ft lb (12 Nm)... see 4.2.5 Grounding - Section 3.";
+        expect(collapseFillerRuns(normal)).toBe(normal);
+      });
+
+      it("sends dot-leader text collapsed so one chunk cannot blow the token limit", async () => {
+        let body: { inputs: string[] } | null = null;
+        vi.stubGlobal(
+          "fetch",
+          vi.fn().mockImplementation(async (_u: string, init?: RequestInit) => {
+            body = JSON.parse(init?.body as string);
+            return { ok: true, json: async () => ({ embeddings: [createMockVector(768)] }) };
+          })
+        );
+        const toc = Array.from({ length: 14 }, (_, i) => tocLine(i)).join(" ");
+
+        await generateEmbeddings([toc], { provider: "deepinfra", deepinfraToken: "t" });
+
+        expect(body!.inputs[0]).not.toContain("....");
+        expect(body!.inputs[0]).toContain("Some Section Title");
+      });
+
+      it("retries with progressively shorter inputs and succeeds at a smaller ceiling", async () => {
+        const bodies: Array<{ inputs: string[] }> = [];
+        const fetchMock = vi.fn().mockImplementation(async (_u: string, init?: RequestInit) => {
+          bodies.push(JSON.parse(init?.body as string));
+          if (bodies.length < 3) return { ok: false, status: 400, text: async () => tokenError };
+          return { ok: true, json: async () => ({ embeddings: [createMockVector(768, 0.3)] }) };
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const vectors = await generateEmbeddings(["dense technical words ".repeat(120)], {
+          provider: "deepinfra",
+          deepinfraToken: "t",
+        });
+
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+        expect(bodies[1]!.inputs[0]!.length).toBeLessThanOrEqual(600);
+        expect(bodies[2]!.inputs[0]!.length).toBeLessThanOrEqual(300);
+        expect(vectors[0]).toHaveLength(768);
+      });
+
+      it("fails loudly (never a zero-vector) when every retry still exceeds the limit", async () => {
+        const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 400, text: async () => tokenError });
+        vi.stubGlobal("fetch", fetchMock);
+
+        await expect(
+          generateEmbeddings(["dense technical words ".repeat(120)], { provider: "deepinfra", deepinfraToken: "t" })
+        ).rejects.toThrow(/DeepInfra embedding request failed with HTTP 400/);
+        expect(fetchMock).toHaveBeenCalledTimes(4); // initial + 600 + 300 + 150
+      });
     });
   });
 
