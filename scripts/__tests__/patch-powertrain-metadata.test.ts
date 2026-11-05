@@ -66,6 +66,16 @@ describe("scripts/patch-powertrain-metadata", () => {
       expect(result.shouldSeverImage).toBe(true);
     });
 
+    it("does not report severing when the chunk has no linked image", () => {
+      const result = computePatchedChunkMetadata({
+        chunk_text: "Standard 3.5L EcoBoost gasoline chassis ground studs 49 to 88",
+        applicable_chassis: "transit",
+        is_page_bev: true, // BEV-only page, but nothing is linked to this chunk
+      });
+      expect(result.fuel).toBe("ice");
+      expect(result.shouldSeverImage).toBe(false);
+    });
+
     it("retains ICE image when chunk is classified as ICE", () => {
       const result = computePatchedChunkMetadata({
         chunk_text: "Standard 3.5L EcoBoost gasoline chassis ground studs 49 to 88",
@@ -78,17 +88,42 @@ describe("scripts/patch-powertrain-metadata", () => {
       expect(result.shouldSeverImage).toBe(false);
     });
 
-    it("preserves existing chunk BEV metadata without overwriting to ICE", () => {
+    it("never keeps a stale BEV tag: it recomputes from the text so wrong tags can be repaired", () => {
       const result = computePatchedChunkMetadata({
         chunk_text: "Seat installation bolt torque specifications",
         section_title: "Seats",
         metadata_json: JSON.stringify({ fuel: "bev", powertrain: "bev", year_start: 2024 }),
+        applicable_chassis: "transit",
         image_caption: "Seat mounting schematic",
       });
 
-      expect(result.fuel).toBe("bev");
-      expect(result.powertrain).toBe("bev");
-      expect(result.shouldSeverImage).toBe(false); // Valid BEV image preserved
+      expect(result.fuel).toBe("ice");
+      expect(result.powertrain).toBe("ice");
+      // unrelated metadata keys survive the repair
+      expect(JSON.parse(result.newMetadataJson)).toMatchObject({ year_start: 2024, fuel: "ice", powertrain: "ice" });
+    });
+
+    it("ignores the repeating page legend and model banner when classifying (no legend pollution)", () => {
+      const legendPage =
+        "Abc = BEV Only Abc = ICE Only Date of Publication: 04/2024 ACME VAN & E-VAN 4 Electrical145 " +
+        "Item Description 1 Fuse 24 (Upfitter Connector) (10A) 2 Audio Speaker R-Rear 3 Entry Illumination";
+      const result = computePatchedChunkMetadata({
+        chunk_text: legendPage,
+        metadata_json: JSON.stringify({ fuel: "bev", powertrain: "bev" }), // as wrongly stored by the old script
+        applicable_chassis: "van",
+      });
+      expect(result.fuel).toBe("ice");
+    });
+
+    it("is idempotent: patching its own output changes nothing", () => {
+      const input = {
+        chunk_text: "Abc = BEV Only Abc = ICE Only 4 Electrical145 Connector pin table",
+        applicable_chassis: "van",
+        metadata_json: JSON.stringify({ year_start: 2024, fuel: "bev" }),
+      };
+      const first = computePatchedChunkMetadata(input);
+      const second = computePatchedChunkMetadata({ ...input, metadata_json: first.newMetadataJson });
+      expect(second.newMetadataJson).toBe(first.newMetadataJson);
     });
 
     it("inherits parent document BEV classification when chunk text is neutral", () => {

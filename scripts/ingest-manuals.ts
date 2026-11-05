@@ -1076,6 +1076,45 @@ export function classifyPowertrainText(text: string): "bev" | "ice" | "all" | un
 }
 
 /**
+ * Single source of truth for a chunk's powertrain tag (used by ingestion AND by scripts/patch-powertrain-metadata.ts).
+ * Marker classification ignores repeating page boilerplate (see classifyPowertrainText); chunks with neither marker
+ * default to ICE for vehicle-specific documents and "all" for universal ones; a document explicitly tagged BEV
+ * (`docFuel === "bev"`) forces BEV. Never inspects previously stored tags, so a wrong tag can always be repaired.
+ */
+export function classifyChunkPowertrain(input: {
+  sectionTitle?: string | null;
+  text: string;
+  applicableChassis?: string | null;
+  docFuel?: unknown;
+}): "bev" | "ice" | "all" {
+  const fromText = classifyPowertrainText(`${input.sectionTitle || ""} ${input.text}`.toLowerCase());
+  const fuel: "bev" | "ice" | "all" = fromText ?? (input.applicableChassis !== "universal" ? "ice" : "all");
+  return input.docFuel === "bev" ? "bev" : fuel;
+}
+
+/**
+ * Pages whose classified content is BEV-ONLY (mixed pages carrying both powertrains are ambiguous and excluded).
+ * A diagram on such a page is treated as a BEV diagram.
+ */
+export function findBevOnlyPages<K>(
+  chunks: ReadonlyArray<{ page: K; sectionTitle?: string | null; text: string }>
+): Set<K> {
+  const fuelsByPage = new Map<K, Set<string>>();
+  for (const chunk of chunks) {
+    const f = classifyPowertrainText(`${chunk.sectionTitle || ""} ${chunk.text}`);
+    if (!f) continue;
+    const set = fuelsByPage.get(chunk.page) ?? new Set<string>();
+    set.add(f);
+    fuelsByPage.set(chunk.page, set);
+  }
+  const bevOnly = new Set<K>();
+  for (const [page, set] of fuelsByPage) {
+    if (set.has("bev") && !set.has("ice") && !set.has("all")) bevOnly.add(page);
+  }
+  return bevOnly;
+}
+
+/**
  * Builds D1 SQL statements to replace a document's chunks. Chunks are keyed by
  * vector ID, and each chunk links to the first schematic image on its page.
  */
@@ -1108,20 +1147,10 @@ ON CONFLICT(id) DO UPDATE SET title = excluded.title, category = excluded.catego
     },
   ];
 
-  // Gather page-level BEV text evidence across chunks to accurately classify diagrams on the same page
-  // A page counts as BEV only if its content is BEV-only; mixed pages (both powertrains) are ambiguous.
-  const pageFuels = new Map<number, Set<string>>();
-  for (const chunk of chunks) {
-    const f = classifyPowertrainText(`${chunk.sectionTitle || ""} ${chunk.text}`);
-    if (!f) continue;
-    const set = pageFuels.get(chunk.pageNumber) ?? new Set<string>();
-    set.add(f);
-    pageFuels.set(chunk.pageNumber, set);
-  }
-  const pageHasBev = new Set<number>();
-  for (const [pg, set] of pageFuels) {
-    if (set.has("bev") && !set.has("ice") && !set.has("all")) pageHasBev.add(pg);
-  }
+  // Page-level BEV evidence (BEV-only pages) to accurately classify diagrams on the same page.
+  const pageHasBev = findBevOnlyPages(
+    chunks.map((c) => ({ page: c.pageNumber, sectionTitle: c.sectionTitle, text: c.text }))
+  );
 
   // Create map of images by page and their detected powertrain
   const imagesByPage = new Map<number, Array<{ id: string; isBev: boolean }>>();
@@ -1145,12 +1174,6 @@ ON CONFLICT(id) DO UPDATE SET document_id = excluded.document_id, page_number = 
 
   for (const chunk of chunks) {
     const wordCount = chunk.text.split(/\s+/).filter(Boolean).length;
-    const combinedChunkText = `${chunk.sectionTitle || ""} ${chunk.text}`.toLowerCase();
-
-    // Automated Powertrain Tagging for chunks:
-    let chunkFuel: "bev" | "ice" | "all" =
-      classifyPowertrainText(combinedChunkText) ??
-      (doc.applicableChassis !== "universal" ? "ice" : "all");
 
     // Merge with parent document metadata_json
     let chunkMetaPouch: Record<string, unknown> = {};
@@ -1160,9 +1183,13 @@ ON CONFLICT(id) DO UPDATE SET document_id = excluded.document_id, page_number = 
       chunkMetaPouch = {};
     }
 
-    if (chunkMetaPouch.fuel === "bev") {
-      chunkFuel = "bev";
-    }
+    // Automated Powertrain Tagging for chunks (shared with scripts/patch-powertrain-metadata.ts):
+    const chunkFuel = classifyChunkPowertrain({
+      sectionTitle: chunk.sectionTitle,
+      text: chunk.text,
+      applicableChassis: doc.applicableChassis,
+      docFuel: chunkMetaPouch.fuel,
+    });
 
     chunkMetaPouch.fuel = chunkFuel;
     chunkMetaPouch.powertrain = chunkFuel;
