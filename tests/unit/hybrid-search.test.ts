@@ -28,14 +28,13 @@ describe("hydrateChunks", () => {
     expect(prepare).not.toHaveBeenCalled();
   });
 
-  it("falls back to mock results when Vectorize index throws (e.g., local dev or unsupported binding)", async () => {
+  it("fails fast when Vectorize throws instead of returning mock or default-vehicle results", async () => {
     const vec = new Array(768).fill(0.1) as number[];
     const query = vi.fn().mockRejectedValue(new Error("Binding VECTOR_INDEX needs to be run remotely"));
     const index = { query } as unknown as VectorizeIndex;
-    const results = await hybridSearch(index, undefined, vec, { chassis: "transit" });
-    expect(results.length).toBeGreaterThan(0);
-    expect(results[0]?.text).toContain("transit");
-    expect(results[0]?.source).toBe("transit_manual_mock");
+    await expect(hybridSearch(index, undefined, vec, { chassis: "transit" })).rejects.toThrow(
+      /Vectorize search failed: Binding VECTOR_INDEX needs to be run remotely/
+    );
   });
 });
 
@@ -824,7 +823,7 @@ describe("Generic Model Disambiguation, Market Defaults & Exact Chunk ID Dedupli
 
     const { db } = makeDb([], [euChunk, usChunk]);
 
-    // Query without market: US market should be preferred over EU in rank ordering
+    // Query without market: the US market is the (only) default and is preferred over EU in rank ordering
     const results = await hybridSearch(index, db, vec, {
       manufacturer: "mercedes-benz",
       model: "sprinter",

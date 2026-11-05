@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { hybridSearch, queryContainsBevIndicators, extractChunkFuelType } from "../utils/db.js";
+import { hybridSearchDetailed, queryContainsBevIndicators, extractChunkFuelType } from "../utils/db.js";
+import type { Clarification } from "../utils/disambiguation.js";
 
 export interface Env {
   DB?: {
@@ -128,6 +129,8 @@ export interface RetrievalContract {
   diagram_text_integrity?: string;
   options_enumeration_rule: string;
   schematic_rule: string;
+  /** Never assume year/model/manufacturer/market: ask when the tool says more context is needed. */
+  context_rule: string;
   /** How to separate documented facts from general guidance, and how to attribute them. */
   evidence_rule: string;
   /** How to present options/recommendations without promoting items whose documented purpose is another system. */
@@ -151,12 +154,13 @@ export const BEV_ONLY_FALLBACK_NOTICE =
 export function buildBaseRetrievalContract(): RetrievalContract {
   return {
     answer_checklist: [
-      "1. Open with the CAUTION / WARNING / NOTE text from the retrieved chunks that applies, quoted, with document and page.",
-      "2. Give the manual's own method for the user's situation (if one is retrieved) BEFORE listing options or adding advice.",
-      "3. When listing items, show each item's documented purpose/use. A list of items documented for specific functions is NOT an approval list: never call them approved, authorized, required or 'the only' ones unless the retrieved text says so.",
-      "4. Check numbered lists and sequences for missing numbers; name the gaps and tell the user to verify them in the source document. Do not call a list complete.",
-      "5. Cite section and page numbers only as they appear in the retrieved chunks; never name a section, page, part number, rating or standard that is not in a retrieved chunk.",
-      "6. Put your own advice LAST under 'General guidance (not from the indexed manuals)': methods and precautions only, no numeric specs, and never pick, rank or endorse items from the documented list (e.g. 'these points are practical'). If the user needs somewhere to connect, point to the manual's approved method, or say none is documented.",
+      "1. Never assume a model year, model or manufacturer the user did not state. If a response says needs_clarification, ask the user the suggested question and call the tool again with their answer; do not answer from an arbitrary variant. The only default is market=us when none is given (see defaults_applied): say so.",
+      "2. Open with the CAUTION / WARNING / NOTE text from the retrieved chunks that applies, quoted, with document and page.",
+      "3. Give the manual's own method for the user's situation (if one is retrieved) BEFORE listing options or adding advice.",
+      "4. When listing items, show each item's documented purpose/use. A list of items documented for specific functions is NOT an approval list: never call them approved, authorized, required or 'the only' ones unless the retrieved text says so.",
+      "5. Check numbered lists and sequences for missing numbers; name the gaps and tell the user to verify them in the source document. Do not call a list complete.",
+      "6. Cite section and page numbers only as they appear in the retrieved chunks; never name a section, page, part number, rating or standard that is not in a retrieved chunk.",
+      "7. Put your own advice LAST under 'General guidance (not from the indexed manuals)': methods and precautions only, no numeric specs, and never pick, rank or endorse items from the documented list (e.g. 'these points are practical'). If the user needs somewhere to connect, point to the manual's approved method, or say none is documented.",
     ],
     strict_grounding_rule:
       "Only provide specifications, dimensions, or torque values if explicitly contained in the retrieved manual chunks below.",
@@ -170,6 +174,8 @@ export function buildBaseRetrievalContract(): RetrievalContract {
       "BROAD QUERY ENUMERATION: When an inquiry is open-ended (e.g., available ground locations, power taps, or mounting zones), do not group items into vague ranges or pick a single favorite. Present a structured, complete inventory of all documented options from the retrieved chunks using compact Markdown tables with their key differentiating parameters (Location, Stud/Thread Spec, Max Rating, Constraints).",
     schematic_rule:
       "MANDATORY DIAGRAMS: Whenever a chunk contains a 'schematic_url', you MUST embed it inline in your markdown response using: ![<Diagram Title>](<schematic_url>).",
+    context_rule:
+      "NO ASSUMED CONTEXT: Specifications depend on manufacturer, model, model year, market and variant. Never assume or default any of them, with ONE exception: when no market is given the tool defaults to the US market and reports it in defaults_applied; tell the user the answer is for the US market and offer other markets. If a search response has needs_clarification=true, do not answer: use clarification.suggested_question (offering the listed options) to ask the user, unless they already stated the missing detail earlier in the conversation, in which case call the tool again with it as a filter. After the user answers, call the tool again with their answer as filters. If the user wants every variant (or does not know), call again with include_all_variants=true and label each part of your answer with its document title and year. When results come from a single document, state which document and year you are answering from.",
     evidence_rule:
       "EVIDENCE LABELING: Keep documented facts and your own reasoning visibly separate. (1) DOCUMENTED: anything attributed to a manual, manufacturer, OEM, 'the manual' or a section/page/figure number MUST appear in the retrieved chunks; cite the document title and page. Never invent or guess section numbers, page numbers, part numbers, ratings, thresholds, or 'the manufacturer requires/prohibits' statements. (2) GENERAL GUIDANCE: you may add practical engineering advice and explanations from general knowledge, but label it 'General guidance (not from the indexed manuals)', keep it free of invented numeric specs (torque, ratings, gauge, clearances, current limits), and never let it contradict or override a retrieved chunk. (3) EXTERNAL STANDARDS (ABYC, NEC, ISO, etc.): do not state their numeric requirements unless the value comes from a retrieved chunk or from calculate_dc_wire_and_fuse; for wire gauge, voltage drop, and fuse sizing call that tool instead of quoting values from memory. (4) If a chunk does not support a claim you want to make, either drop it or label it as general guidance. (5) When reporting what was NOT retrieved, say only that it was not retrieved; do not state where it is, which page it is on, or what it contains unless a retrieved chunk says so. Avoid absolute claims ('only', 'always', 'never', 'all', 'the full list') about a manual unless the retrieved text itself uses them. (6) Inclusion in a table or list is not approval: a list of items documented for specific functions (ground points, taps, connectors, mounting holes, fittings) does not mean they are approved, authorized or recommended for the user's add-on use; say so only when a retrieved sentence states it, and quote that sentence.",
     recommendation_rule:
@@ -309,23 +315,58 @@ export async function generateEmbedding(
       console.warn("DEEPINFRA_TOKEN not set; falling back to Workers AI binding.");
       return await generateWorkersAiEmbedding(text, ai);
     }
-    console.warn("DEEPINFRA_TOKEN not set and env.AI unavailable; returning zero vector for local dev/testing.");
-    return new Array(768).fill(0) as number[];
+    // Fail fast (AGENTS.md): a zero vector makes cosine similarity collapse and returns arbitrary chunks.
+    throw new Error(
+      "No embedding provider available: set DEEPINFRA_TOKEN (EMBEDDING_PROVIDER=deepinfra) or bind Workers AI (env.AI). Refusing to use a zero vector."
+    );
   }
 
   // Cloudflare Workers AI
   if (ai) {
     return await generateWorkersAiEmbedding(text, ai);
   }
-  console.warn(
-    "Workers AI binding (env.AI) is unavailable; returning zero vector for local dev/testing."
+  throw new Error(
+    "No embedding provider available: Workers AI binding (env.AI) is unavailable and no DEEPINFRA_TOKEN is set. Refusing to use a zero vector."
   );
-  return new Array(768).fill(0) as number[];
 }
 
 /**
  * Registers manual search tools on McpServer with directive grounding contracts.
  */
+/**
+ * Response returned instead of results when the best matches span several variants (model year, model,
+ * manufacturer, market) and the caller did not say which one it means. Shaped like a normal search response
+ * (empty results, count 0) so existing consumers keep working, plus `needs_clarification` / `clarification`.
+ */
+export function buildClarificationPayload(
+  query: string,
+  clarification: Clarification,
+  appliedFilters: Record<string, unknown>,
+  defaultsApplied: Record<string, string> = {}
+) {
+  return {
+    retrieval_metadata: {
+      query,
+      count: 0,
+      matches_found: false,
+      needs_clarification: true,
+      filter_applied: appliedFilters,
+      ...(Object.keys(defaultsApplied).length > 0 ? { defaults_applied: defaultsApplied } : {}),
+      clarification,
+      retrieval_contract: buildBaseRetrievalContract(),
+    },
+    results: [] as unknown[],
+    count: 0,
+    query,
+    matches_found: false,
+    needs_clarification: true,
+    clarification,
+    applied_filters: appliedFilters,
+    ...(Object.keys(defaultsApplied).length > 0 ? { defaults_applied: defaultsApplied } : {}),
+    message: `More context needed: ${clarification.suggested_question}`,
+  };
+}
+
 export function registerManualTools(
   mcp: McpServer,
   vectorIndex: VectorizeIndex,
@@ -345,6 +386,7 @@ export function registerManualTools(
         `Searches indexed technical documentation, OEM body builder manuals (BEMM), and component guides.
 IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
 - Adhere strictly to the returned 'retrieval_contract'.
+- NO ASSUMED CONTEXT: never assume a model year, model or manufacturer. The ONLY default is market=us when none is given (see defaults_applied; mention it to the user). If the response has needs_clarification=true, do NOT answer: ask the user the suggested_question (offering the listed options) unless they already stated it earlier, then call again with the answer as filters (or include_all_variants=true if they want every variant).
 - STRICT ICE DEFAULT: Always assume internal combustion engine (ICE / gas / diesel) by default. Deliver exhaustive ICE specifications first. Never gate the response asking if the user has an EV.
 - DIAGRAM-TEXT CONSISTENCY: Every callout number, pinout ID, or stud rating in your text MUST match the exact diagram image embedded. Never cite callout numbers from an electric/BEV diagram when describing an ICE vehicle (e.g., do not cite BEV points 1–45 when answering for ICE points 49–88).
 - BROAD QUERY ENUMERATION: When an inquiry is open-ended (e.g., connection points, mounting zones), output a structured, complete inventory of all documented options using compact tables or categorized lists with key parameters.
@@ -393,20 +435,29 @@ IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
           .describe("Optional short model name in lowercase (e.g., 'transit', 'sprinter', 'promaster')."),
         market: z
           .enum(["us", "eu", "global"])
-          .default("us")
           .optional()
-          .describe("Regional market filter: us, eu, or global (default us)"),
+          .describe("Optional regional market filter: us, eu, or global. DEFAULT: us when not specified (the response reports defaults_applied)."),
         model_year: z
           .number()
           .int()
           .optional()
-          .describe("Filter by vehicle or appliance model year (e.g. 2024)"),
+          .describe("Filter by vehicle or appliance model year (e.g. 2024). Never assumed: if several editions match, the tool asks (see needs_clarification)."),
+        include_all_variants: z
+          .boolean()
+          .optional()
+          .describe("Set true ONLY when the user explicitly wants every matching edition/variant (for example after being asked which year and answering 'all' or 'not sure'). Results then include each variant, labelled with its document title and year."),
       },
     },
     async (args) => {
       const queryVector = await generateEmbedding(args.query, ai, deepinfraToken, embeddingProvider);
 
-      const results = await hybridSearch(vectorIndex, db, queryVector, {
+      // The ONLY default: US market when none is specified. Reported to the caller via defaults_applied.
+      const market = args.market ?? "us";
+      const defaultsApplied: Record<string, string> = args.market ? {} : { market: "us" };
+
+      const outcome = await hybridSearchDetailed(vectorIndex, db, queryVector, {
+        clarify: !args.include_all_variants,
+        collapseEditions: !args.include_all_variants,
         topK: args.top_k ?? 8,
         ...(cdnBaseUrl ? { cdnBaseUrl } : {}),
         ...(args.source_filter ? { source: args.source_filter } : {}),
@@ -415,21 +466,33 @@ IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
         ...(args.category ? { category: args.category } : {}),
         ...(args.manufacturer ? { manufacturer: args.manufacturer } : {}),
         ...(args.model ? { model: args.model } : {}),
-        ...(args.market ? { market: args.market } : {}),
+        market,
         ...(args.model_year !== undefined ? { model_year: args.model_year } : {}),
         queryText: args.query,
       });
+      const results = outcome.results;
 
       const appliedFilters = {
         ...(args.category ? { category: args.category } : {}),
         ...(args.manufacturer ? { manufacturer: args.manufacturer } : {}),
         ...(args.model ? { model: args.model } : {}),
-        ...(args.market ? { market: args.market } : {}),
+        market,
         ...(args.model_year !== undefined ? { model_year: args.model_year } : {}),
         ...(args.chassis ? { chassis: args.chassis } : {}),
         ...(args.subsystem ? { subsystem: args.subsystem } : {}),
         ...(args.source_filter ? { source: args.source_filter } : {}),
       };
+
+      if (outcome.clarification) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(buildClarificationPayload(args.query, outcome.clarification, appliedFilters, defaultsApplied), null, 2),
+            },
+          ],
+        };
+      }
 
       const retrievalContract: RetrievalContract = {
         ...buildBaseRetrievalContract(),
@@ -442,6 +505,7 @@ IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
           count: results.length,
           matches_found: results.length > 0,
           filter_applied: appliedFilters,
+          ...(Object.keys(defaultsApplied).length > 0 ? { defaults_applied: defaultsApplied } : {}),
           retrieval_contract: retrievalContract,
           ...(results.length === 0
             ? {
@@ -467,6 +531,7 @@ IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
         query: args.query,
         matches_found: results.length > 0,
         applied_filters: appliedFilters,
+        ...(Object.keys(defaultsApplied).length > 0 ? { defaults_applied: defaultsApplied } : {}),
         ...(results.length === 0
           ? {
               message:

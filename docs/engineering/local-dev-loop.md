@@ -27,7 +27,7 @@ over the Cloudflare REST API. There is no local emulator for Vectorize, so this 
 
 | Command | What it does |
 |---|---|
-| `pnpm local:probe "<query>" '{"model":"transit","model_year":2024}'` | Calls the real `search_van_manuals` handler; prints rank, score, page, powertrain tag, doc title, schematic URL. `RAW=1` prints full JSON incl. the retrieval contract. |
+| `pnpm local:probe "<query>" '{"model":"transit","model_year":2024}'` | Calls the real `search_van_manuals` handler; prints rank, score, page, powertrain tag, doc title, schematic URL. If the search needs more context (several editions/models match), it prints `NEEDS CLARIFICATION` with the choices instead of results. `RAW=1` prints full JSON incl. the retrieval contract. |
 | `pnpm local:trace "<query>" [filters-json]` | Same optional filters as `local:probe` (none by default, so the two are comparable). Shows keyword / vector / fused rankings (page/tag) **before** hydration, BEV filtering and slicing. Use to find the stage that drops a chunk. |
 | `pnpm local:sql "SELECT …" ['[param,…]']` | Runs SQL against dev D1 (inspect tags, chunk text, schematics). |
 | `pnpm local:server` | Serves the local Worker on `http://127.0.0.1:8787` (same JSON-RPC endpoint as production). |
@@ -73,4 +73,5 @@ universal cautions → `extractNeutralSectionContext`. (This section is an examp
 - To restart the local server after editing `src/`, stop the old process by PID (`ss -ltnp | grep :8787`) — `tsx` does not hot-reload.
   Avoid `pkill -f`/`pgrep -f` patterns that appear in your own command line; they can kill your shell.
 - `pnpm eval:grounding` needs the environment variables from `.campervan-d1.env` in the shell (`set -a; . ./.campervan-d1.env; set +a`).
-
+- Without credentials/bindings (e.g. `cf dev` in CI) `search_van_manuals` fails fast ("No embedding provider available" / "Vectorize search failed") instead of returning fake results; `scripts/test-mcp-endpoints.sh` accepts that offline. To run it against real data use `pnpm local:server` and `BASE_URL=http://127.0.0.1:8787 scripts/test-mcp-endpoints.sh`.
+- Don't `source .campervan-d1.env` into the shell you run `pnpm test:unit` from: tests assume those variables are unset (use `pnpm local:*` scripts, which load the file only for that process).

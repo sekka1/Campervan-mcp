@@ -88,7 +88,7 @@ tests:
 
   # Test 3: Customer Connection Points (search_van_manuals)
   - vars:
-      question: "Where are the Customer Connection Points (CCP1 and CCP2) located in a Ford Transit, and what are their current ratings?"
+      question: "Where are the Customer Connection Points (CCP1 and CCP2) located in a 2024 Ford Transit, and what are their current ratings?"
     assert:
       - type: contains
         value: "search_van_manuals"
@@ -121,7 +121,7 @@ tests:
 
   # Test 4: Chassis grounding & BMS rules (search_van_manuals)
   - vars:
-      question: "Where are the approved chassis grounding points located in a Ford Transit for auxiliary electrical systems, and what are the rules regarding connecting to the battery negative terminal?"
+      question: "Where are the approved chassis grounding points located in a 2024 Ford Transit for auxiliary electrical systems, and what are the rules regarding connecting to the battery negative terminal?"
     assert:
       - type: contains
         value: "search_van_manuals"
