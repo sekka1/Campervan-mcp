@@ -125,10 +125,20 @@ describe("Post-Deployment Live Smoke Test Suite", () => {
     expect(data.results).toBeDefined();
     expect(data.results.length).toBe(8);
 
+    // Embedding health. Hybrid (vector + keyword, RRF-fused) results legitimately include lower cosine
+    // scores (e.g. 0.59) when a chunk ranks well on both signals, so the floor applies to the BEST result,
+    // not to every result. Every score must still be a sane, positive similarity (never the -1 collapse
+    // produced by zero-vectors). Keyword-only candidates carry a fixed synthetic 0.75.
+    const scores = data.results.map((r) => r.score);
+    expect(Math.max(...scores)).toBeGreaterThan(0.6);
+    // Topical sanity: a collapsed/zero-vector embedding returns arbitrary chunks, so the top results must
+    // actually be about the queried term.
+    expect(data.results.slice(0, 3).some((r) => /CCP/i.test(r.text))).toBe(true);
+
     for (const r of data.results) {
       console.log(`  - Chunk: ${r.chunk_id} | Page: ${r.page} | Score: ${r.score} | Source: "${r.source}"`);
       expect(r.score).not.toBe(-1);
-      expect(r.score).toBeGreaterThan(0.6);
+      expect(r.score).toBeGreaterThan(0);
       expect(r.score).toBeLessThanOrEqual(1.0);
       expect(r.source).toBeDefined();
       expect(r.source).not.toBe("unknown");

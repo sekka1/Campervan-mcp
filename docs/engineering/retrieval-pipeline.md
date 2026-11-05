@@ -70,7 +70,9 @@ Order of operations (every step is a place a chunk can be lost; use `pnpm local:
    grouped `COUNT` query per search; no suppression if it fails.
 4. **RRF fusion** `reciprocalRankFusion` (`1/(60+rank)`). Keyword-only hits get a **synthetic score of 0.75**
    (that is why many results show exactly `0.750`; it is not a cosine score, and is **not comparable** to real
-   similarities — never sort by raw `score` across sources).
+   similarities — never sort by raw `score` across sources). Consequently the live smoke test asserts the *best*
+   score > 0.60 (plus sane positive scores and topical results), not a 0.60 floor on every result; a per-result
+   floor only ever passed because synthetic 0.75 scores were filling the top 8 and hiding missing semantic matches.
 5. **Hydrate** `hydrateChunks`: loads chunk + document + schematic rows with **progressive filter relaxation**
    (all filters → drop category/subsystem → drop model/chassis → market+year only), then stitches forward
    continuation text (`chunk_N+1`, `+2`) onto top hits and cue-bearing chunks — but **only across compatible
