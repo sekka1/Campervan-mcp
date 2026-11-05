@@ -4,13 +4,16 @@
  * the vector ranking and the fused (RRF) ranking, BEFORE hydration, BEV filtering and top_k slicing.
  * Use it to find the stage at which an expected chunk drops out.
  *
- * Usage: tsx --env-file=.campervan-d1.env local/trace.ts "<query>" ['{"model":"transit","model_year":2024}']
+ * Usage: tsx --env-file=.campervan-d1.env local/trace.ts "<query>" ['{"model":"<model>","model_year":<year>}']
+ * (filters are optional and, like local/probe.ts, empty by default)
  */
 import { tokenizeQuery, searchD1KeywordCandidates, searchManuals, reciprocalRankFusion } from "../src/utils/db.js";
 import { makeLocalEnv } from "./env.js";
 
 const query = process.argv[2] ?? "where are the grounding points for a 2024 Ford transit?";
-const filters = process.argv[3] ? JSON.parse(process.argv[3]) : { model: "transit", model_year: 2024 };
+// No filters by default, matching local/probe.ts, so a trace and a probe of the same query are comparable.
+// Pass the same JSON filters to both when investigating a filtered search.
+const filters = process.argv[3] ? JSON.parse(process.argv[3]) : {};
 const env = makeLocalEnv();
 
 const tokens = tokenizeQuery(query);

@@ -22,7 +22,11 @@ const provider = new Provider({
   },
 });
 const result = await provider.callApi(question);
-const output = String(result.output ?? result.error);
+if (result.error || typeof result.output !== "string") {
+  console.error(`local:ask failed: ${result.error ?? "provider returned no output"}`);
+  process.exit(1);
+}
+const output: string = result.output;
 if (process.env["SAVE"]) writeFileSync(process.env["SAVE"], output);
 
 const { answer, evidence, pages } = parseProviderOutput(output);

@@ -28,7 +28,7 @@ over the Cloudflare REST API. There is no local emulator for Vectorize, so this 
 | Command | What it does |
 |---|---|
 | `pnpm local:probe "<query>" '{"model":"transit","model_year":2024}'` | Calls the real `search_van_manuals` handler; prints rank, score, page, powertrain tag, doc title, schematic URL. `RAW=1` prints full JSON incl. the retrieval contract. |
-| `pnpm local:trace "<query>"` | Shows keyword / vector / fused rankings (page/tag) **before** hydration, BEV filtering and slicing. Use to find the stage that drops a chunk. |
+| `pnpm local:trace "<query>" [filters-json]` | Same optional filters as `local:probe` (none by default, so the two are comparable). Shows keyword / vector / fused rankings (page/tag) **before** hydration, BEV filtering and slicing. Use to find the stage that drops a chunk. |
 | `pnpm local:sql "SELECT …" ['[param,…]']` | Runs SQL against dev D1 (inspect tags, chunk text, schematics). |
 | `pnpm local:server` | Serves the local Worker on `http://127.0.0.1:8787` (same JSON-RPC endpoint as production). |
 | `pnpm local:ask "<question>"` | With the server running: the promptfoo 2-turn loop (LLM → local MCP → LLM synthesis); prints the final answer, then a **grounding check** listing specs/sections/pages/part numbers/standards that no tool returned. `ASK_MODEL`, `SERVER_URL`, `SAVE=<file>` override/extend. |
