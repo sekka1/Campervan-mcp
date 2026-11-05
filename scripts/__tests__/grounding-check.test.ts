@@ -53,6 +53,12 @@ describe("grounding-check", () => {
     expect(groundingAssertion(output, {}).pass).toBe(true);
   });
 
+  it("matches part numbers despite stray spaces around hyphens from PDF extraction", () => {
+    const chunk = { page: 7, text: "order jumper cable AB1C- 14301-K* for twin systems" };
+    const output = `${trace([chunk])}\n\nUse jumper cable AB1C-14301-K.`;
+    expect(groundingAssertion(output, {}).pass).toBe(true);
+  });
+
   it("skips when there is no tool evidence", () => {
     expect(groundingAssertion("just an answer with 40A", {}).pass).toBe(true);
   });

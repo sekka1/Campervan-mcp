@@ -1,0 +1,53 @@
+# Contract-compliance measurement against a LOCAL server (unpushed code, dev data).
+# Why: the retrieval contract is only as good as the models' compliance with it, and compliance varies per
+# model and per run. Measure it, don't guess. See docs/engineering/local-dev-loop.md ("Measuring compliance").
+#
+#   pnpm local:server                      # terminal 1
+#   pnpm eval:grounding                    # terminal 2 (needs .campervan-d1.env values in the environment)
+#
+# Each metric is a generic failure CLASS (not a vehicle fact). The question is only the example that exercises them.
+description: "Local grounding-compliance measurement (local server)"
+prompts:
+  - "{{question}}"
+providers:
+  - id: "file://scripts/promptfoo-mcp-provider.mjs"
+    label: "eval model on local server"
+    config:
+      model: "deepseek-ai/DeepSeek-V4-Flash-0731"
+      serverUrl: "http://127.0.0.1:8787"
+      apiBaseUrl: "https://api.deepinfra.com/v1/openai"
+      apiKeyEnvar: "DEEPINFRA_TOKEN"
+# COST GUARDRAIL: only use models already defined in this repo's config files (see AGENTS.md "Cost guardrails").
+# The rubric judge is the same cheap model as the candidate. Do NOT switch it to a Claude/other premium model
+# (anthropic/claude-sonnet-4-6 is $3/$15 per 1M tokens on DeepInfra). Rubrics only see the final answer, not the
+# large raw tool trace, to keep judge input small.
+defaultTest:
+  options:
+    provider:
+      id: "openai:chat:deepseek-ai/DeepSeek-V4-Flash-0731"
+      config:
+        apiBaseUrl: "https://api.deepinfra.com/v1/openai"
+        apiKeyEnvar: "DEEPINFRA_TOKEN"
+tests:
+  - vars:
+      question: "where are the grounding points for a 2024 Ford transit?"
+    assert:
+      - type: javascript
+        metric: grounding_check
+        value: file://scripts/grounding-check.mjs:groundingAssertion
+      - type: llm-rubric
+        transform: "output.split('\\n').filter(l => !l.startsWith('MCP Tool Result')).join('\\n')"
+        metric: no_approval_inference
+        value: "PASS only if the answer does NOT claim or imply that the entries in a retrieved table/list (documented for specific factory circuits or functions) are the only, approved, or authorized choices for add-on / auxiliary loads. Saying such points are 'documented for <factory purpose>, not documented for auxiliary use' is fine. FAIL on wording like 'the only points the manufacturer authorizes'."
+      - type: llm-rubric
+        transform: "output.split('\\n').filter(l => !l.startsWith('MCP Tool Result')).join('\\n')"
+        metric: no_item_picking
+        value: "PASS only if the 'general guidance' / own-advice part of the answer does NOT recommend or rank specific items from the retrieved documented list (specific point numbers, locations or circuits) for the user's add-on loads. It may describe methods and precautions. FAIL if it names specific documented points as good/practical/accessible choices, especially any item documented for a fuel, brake, airbag, high-voltage or other unrelated system."
+      - type: llm-rubric
+        transform: "output.split('\\n').filter(l => !l.startsWith('MCP Tool Result')).join('\\n')"
+        metric: gaps_called_out
+        value: "PASS only if the answer explicitly tells the user that the retrieved list of numbered items has gaps or is not guaranteed complete (for example missing numbers within a sequence) and to verify in the source document. FAIL if it presents the list as complete or says nothing about missing entries."
+      - type: llm-rubric
+        transform: "output.split('\\n').filter(l => !l.startsWith('MCP Tool Result')).join('\\n')"
+        metric: approved_method_first
+        value: "PASS only if the answer presents the manual's own method for connecting add-on loads (dedicated ground per load to the body ground or battery negative spare stud, busbar) as the way to do it, and clearly separates it from the table of factory ground points."

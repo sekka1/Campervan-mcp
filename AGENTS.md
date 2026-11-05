@@ -15,7 +15,7 @@ Hard-won rules (details in those docs):
 1. **Diagnose with data before changing code.** Check stored tags/pages (`pnpm local:sql`) and the stage at which a chunk is lost (`pnpm local:trace`). Re-ingesting does not change powertrain tags unless the classifier code changed.
 2. **Generic-first (examples are not rules).** Never add logic, contract text or prompts that name a page, part, vehicle, model year or circuit you just saw (a unit test enforces this for the grounding rules). Classify the failure and fix the *class* with a mechanism, a contract principle or a deterministic check — see `retrieval-pipeline.md` §8. Concrete cases belong only in labeled test fixtures/promptfoo regressions. Sprinter, Ram/ProMaster, batteries, HVAC, air and water systems must all work through the same code.
 3. **LLM freedom, grounded.** The retrieval contract (`buildBaseRetrievalContract()` in `src/tools/manuals.ts`, single source) lets the model explain and advise, but anything attributed to a manual must come from retrieved chunks, and all other advice must be labeled "General guidance (not from the indexed manuals)". Extend the builder, not inline copies.
-4. **Verify the synthesized answer**, not just retrieval: `pnpm local:ask` (it runs `scripts/grounding-check.mjs`, which flags specs/sections/pages/part numbers/standards no tool returned), then spot-check quoted claims against D1 text. The checker proves presence, not attribution.
+4. **Verify the synthesized answer**, not just retrieval: `pnpm local:ask` (it runs `scripts/grounding-check.mjs`, which flags specs/sections/pages/part numbers/standards no tool returned), then spot-check quoted claims against D1 text. The checker proves presence, not attribution. Contract wording is a hypothesis: after changing it, **measure** compliance with `pnpm eval:grounding` (local server, several repeats, generic failure-class metrics) before and after — models vary run to run (`retrieval-pipeline.md` §8.2).
 5. `.campervan-d1.env` holds real credentials: never commit it, print it, or paste its contents.
 
 ---
@@ -35,6 +35,16 @@ Bugs and bad answers will keep showing up one concrete case at a time (a missing
 Worked example (PR #74/#75): one platform's grounding answer lacked the diagram, invented rules and recommended a fuel-circuit ground. The fixes were: section-continuity-aware neighbour promotion and variant-neutral section notes (retrieval mechanisms), purpose-matching and evidence-labeling contract principles, and a deterministic claim checker — none names that platform's pages or circuits.
 
 If you cannot express a fix without naming a specific vehicle, part or page, stop and re-do step 2 — or ask the user.
+
+---
+
+## 0.2 Cost Guardrails: Models and Paid APIs
+
+Paid model calls cost the owner real money (a premium judge model was once used by mistake for evaluation runs).
+1. **Only use models that are already defined in this repo's config/code** (`promptfooconfig.yaml`, `scripts/metadata.ts`, `src/tools/manuals.ts`, `local/ask.ts`). Never introduce another model id, and never use Claude/GPT-class or other premium models via DeepInfra or any API for evaluation, grading, testing or debugging.
+2. **Do not copy defaults blindly.** If an existing config references an expensive model (e.g. the `llm-rubric` grader in `promptfooconfig.yaml` is `anthropic/claude-sonnet-4-6`, $3/$15 per 1M tokens), do not reuse it in new configs or scripts: use the cheap default model (`deepseek-ai/DeepSeek-V4-Flash-0731`) and tell the user about the expensive setting.
+3. **Keep paid runs small and deliberate.** Prefer unit tests and local probes (free) first; use few repeats; send graders only the text they need (e.g. strip the raw tool trace); never loop evaluations without a stated reason.
+4. **Ask before using any model or paid service not listed above**, and report approximate usage when you ran evaluations.
 
 ---
 

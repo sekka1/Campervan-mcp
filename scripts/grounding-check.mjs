@@ -140,6 +140,9 @@ export function findUngroundedClaims({ answer, evidence, pages = new Set(), ques
   for (const m of haystack.matchAll(/\b(?:p|pp|page|pages)\.?\s*(\d{1,4})\b/gi)) pageSet.add(Number(m[1]));
   for (const m of haystack.matchAll(/(?:^|[/_-])p(\d{1,4})-\d+\.(?:png|jpe?g)/gi)) pageSet.add(Number(m[1]));
 
+  // PDF text extraction often leaves stray spaces around hyphens ("KK2V- 14301-K"); match part numbers ignoring them.
+  const tightHay = haystack.replace(/\s*[-–]\s*/g, "-");
+
   return extractClaims(answer).filter((c) => {
     switch (c.type) {
       case "spec":
@@ -149,7 +152,7 @@ export function findUngroundedClaims({ answer, evidence, pages = new Set(), ques
       case "page":
         return !pageSet.has(Number(c.value));
       case "part":
-        return !new RegExp(`(?<![A-Za-z0-9-])${escapeRe(c.value)}(?![A-Za-z0-9])`, "i").test(haystack);
+        return !new RegExp(`(?<![A-Za-z0-9-])${escapeRe(c.value)}(?![A-Za-z0-9])`, "i").test(tightHay);
       case "standard":
         return !lowerHay.includes(c.value);
       default:
