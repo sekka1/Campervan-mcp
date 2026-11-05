@@ -126,6 +126,12 @@ export interface RetrievalContract {
   diagram_text_integrity?: string;
   options_enumeration_rule: string;
   schematic_rule: string;
+  /** How to separate documented facts from general guidance, and how to attribute them. */
+  evidence_rule: string;
+  /** How to present options/recommendations without promoting items whose documented purpose is another system. */
+  recommendation_rule: string;
+  /** How to describe completeness and carry through the manual's own cautions/warnings. */
+  completeness_and_warnings_rule: string;
   no_matches_guidance?: string;
   /** Set when a non-BEV query only matched BEV-tagged chunks. */
   powertrain_notice?: string;
@@ -134,6 +140,35 @@ export interface RetrievalContract {
 /** Notice attached when an ICE-default query could only retrieve BEV-tagged chunks. */
 export const BEV_ONLY_FALLBACK_NOTICE =
   "NO ICE MATCH FOUND: Every retrieved chunk is tagged BEV / electric (E-Transit, etc.) and the query did not ask for an electric vehicle. State clearly that the indexed ICE (gas/diesel) content for this topic was not retrieved, and that the results below describe the BEV configuration only. Do NOT present BEV callout numbers, ratings, or diagrams as applying to an ICE vehicle.";
+
+/**
+ * Builds the vehicle- and component-agnostic retrieval contract returned with every search.
+ * Rules here must stay GENERIC (they apply to any chassis, battery system, HVAC, plumbing, etc.);
+ * never add vehicle-specific facts. See docs/engineering/retrieval-pipeline.md.
+ */
+export function buildBaseRetrievalContract(): RetrievalContract {
+  return {
+    strict_grounding_rule:
+      "Only provide specifications, dimensions, or torque values if explicitly contained in the retrieved manual chunks below.",
+    missing_manual_rule:
+      "CRITICAL NEGATIVE CONSTRAINT: When a requested third-party component (e.g., MaxxFan, specific aftermarket appliance) is NOT found in the indexed manuals: 1) State clearly that the component manual is not in the database. 2) Provide ONLY vehicle-side OEM chassis constraints (e.g., roof bow clearance, sealant requirements). 3) DO NOT attempt to provide 'widely published', 'typical', or general specifications for the missing component (especially torque, screw sizes, or cut-out tolerances). 4) Explicitly state: 'Consult the manufacturer\'s manual for torque and cut-out specifications, as no official torque value is provided in vehicle documentation.'",
+    powertrain_rule:
+      "STRICT ICE DEFAULT: Always assume internal combustion engine (ICE / gas / diesel) by default. Deliver exhaustive ICE specifications first. Never gate the response asking if the user has an EV. When an electric/BEV configuration IS explicitly requested, prioritize the electric chassis specifications immediately.",
+    diagram_text_integrity:
+      "DIAGRAM-TEXT CONSISTENCY: Every callout number, pinout ID, or stud rating in your text MUST match the exact diagram image embedded. Never cite callout numbers from an electric/BEV diagram when describing an ICE vehicle (e.g., do not cite BEV points 1–45 when answering for ICE points 49–88). If the only retrieved diagram has a 'BEV' header and the query is ICE, DO NOT embed that image; explain that the ICE diagram is missing from the indexed results.",
+    options_enumeration_rule:
+      "BROAD QUERY ENUMERATION: When an inquiry is open-ended (e.g., available ground locations, power taps, or mounting zones), do not group items into vague ranges or pick a single favorite. Present a structured, complete inventory of all documented options from the retrieved chunks using compact Markdown tables with their key differentiating parameters (Location, Stud/Thread Spec, Max Rating, Constraints).",
+    schematic_rule:
+      "MANDATORY DIAGRAMS: Whenever a chunk contains a 'schematic_url', you MUST embed it inline in your markdown response using: ![<Diagram Title>](<schematic_url>).",
+    evidence_rule:
+      "EVIDENCE LABELING: Keep documented facts and your own reasoning visibly separate. (1) DOCUMENTED: anything attributed to a manual, manufacturer, OEM, 'the manual' or a section/page/figure number MUST appear in the retrieved chunks; cite the document title and page. Never invent or guess section numbers, page numbers, part numbers, ratings, thresholds, or 'the manufacturer requires/prohibits' statements. (2) GENERAL GUIDANCE: you may add practical engineering advice and explanations from general knowledge, but label it 'General guidance (not from the indexed manuals)', keep it free of invented numeric specs (torque, ratings, gauge, clearances, current limits), and never let it contradict or override a retrieved chunk. (3) EXTERNAL STANDARDS (ABYC, NEC, ISO, etc.): do not state their numeric requirements unless the value comes from a retrieved chunk or from calculate_dc_wire_and_fuse; for wire gauge, voltage drop, and fuse sizing call that tool instead of quoting values from memory. (4) If a chunk does not support a claim you want to make, either drop it or label it as general guidance.",
+    recommendation_rule:
+      "RECOMMENDATIONS MUST BE TRACEABLE: When listing documented options (mounting points, taps, grounds, locations, connectors), carry through the manual's own descriptive columns (use/purpose, type, rating, constraint) so the reader can see what each option is actually for. Rank or recommend an option as 'preferred/best' only when a documented attribute supports it, and say which one. Never recommend an item whose documented purpose belongs to a different function or system than the user's intended use (examples across domains: a fuel-system, brake, airbag or high-voltage circuit ground used for an add-on load; a potable-water fitting used for waste; a gas-supply or exhaust path repurposed for ventilation; a safety-critical sensor circuit tapped for accessories) unless the retrieved text explicitly permits that use; instead flag it as 'documented for <purpose>, not documented for auxiliary use'. Where the manual names an approved method for add-on loads, present that method first.",
+    completeness_and_warnings_rule:
+      "COMPLETENESS AND WARNINGS: Describe a list as 'complete' or 'all' only if you can see every item the source implies; otherwise say 'as retrieved' and call out gaps (for example missing numbers in a sequence) and tell the user to verify them in the source document. Reproduce every CAUTION / WARNING / NOTE in the retrieved chunks that bears on the user's question (for example 'use only the approved locations', required torque, isolation, venting or corrosion-protection requirements), in the manual's own terms, before giving your own advice.",
+  };
+}
+
 
 export function isBevOnlyFallback(
   query: string,
@@ -387,18 +422,7 @@ IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
       };
 
       const retrievalContract: RetrievalContract = {
-        strict_grounding_rule:
-          "Only provide specifications, dimensions, or torque values if explicitly contained in the retrieved manual chunks below.",
-        missing_manual_rule:
-          "CRITICAL NEGATIVE CONSTRAINT: When a requested third-party component (e.g., MaxxFan, specific aftermarket appliance) is NOT found in the indexed manuals: 1) State clearly that the component manual is not in the database. 2) Provide ONLY vehicle-side OEM chassis constraints (e.g., roof bow clearance, sealant requirements). 3) DO NOT attempt to provide 'widely published', 'typical', or general specifications for the missing component (especially torque, screw sizes, or cut-out tolerances). 4) Explicitly state: 'Consult the manufacturer\'s manual for torque and cut-out specifications, as no official torque value is provided in vehicle documentation.'",
-        powertrain_rule:
-          "STRICT ICE DEFAULT: Always assume internal combustion engine (ICE / gas / diesel) by default. Deliver exhaustive ICE specifications first. Never gate the response asking if the user has an EV. When an electric/BEV configuration IS explicitly requested, prioritize the electric chassis specifications immediately.",
-        diagram_text_integrity:
-          "DIAGRAM-TEXT CONSISTENCY: Every callout number, pinout ID, or stud rating in your text MUST match the exact diagram image embedded. Never cite callout numbers from an electric/BEV diagram when describing an ICE vehicle (e.g., do not cite BEV points 1–45 when answering for ICE points 49–88). If the only retrieved diagram has a 'BEV' header and the query is ICE, DO NOT embed that image; explain that the ICE diagram is missing from the indexed results.",
-        options_enumeration_rule:
-          "BROAD QUERY ENUMERATION: When an inquiry is open-ended (e.g., available ground locations, power taps, or mounting zones), do not group items into vague ranges or pick a single favorite. Present a structured, complete inventory of all documented options from the retrieved chunks using compact Markdown tables with their key differentiating parameters (Location, Stud/Thread Spec, Max Rating, Constraints).",
-        schematic_rule:
-          "MANDATORY DIAGRAMS: Whenever a chunk contains a 'schematic_url', you MUST embed it inline in your markdown response using: ![<Diagram Title>](<schematic_url>).",
+        ...buildBaseRetrievalContract(),
         ...(isBevOnlyFallback(args.query, results) ? { powertrain_notice: BEV_ONLY_FALLBACK_NOTICE } : {}),
       };
 
@@ -628,20 +652,7 @@ export async function searchVanManuals(
   const searchResults = await executeVectorSearch(query, env, filterOptions);
   const matchesFound = searchResults.length > 0;
 
-  const baseContract: RetrievalContract = {
-    strict_grounding_rule:
-      "Only provide specifications, dimensions, or torque values if explicitly contained in the retrieved manual chunks below.",
-    missing_manual_rule:
-      "CRITICAL NEGATIVE CONSTRAINT: When a requested third-party component (e.g., MaxxFan, specific aftermarket appliance) is NOT found in the indexed manuals: 1) State clearly that the component manual is not in the database. 2) Provide ONLY vehicle-side OEM chassis constraints (e.g., roof bow clearance, sealant requirements). 3) DO NOT attempt to provide 'widely published', 'typical', or general specifications for the missing component (especially torque, screw sizes, or cut-out tolerances). 4) Explicitly state: 'Consult the manufacturer\'s manual for torque and cut-out specifications, as no official torque value is provided in vehicle documentation.'",
-    powertrain_rule:
-      "STRICT ICE DEFAULT: Always assume internal combustion engine (ICE / gas / diesel) by default. Deliver exhaustive ICE specifications first. Never gate the response asking if the user has an EV. When an electric/BEV configuration IS explicitly requested, prioritize the electric chassis specifications immediately.",
-    diagram_text_integrity:
-      "DIAGRAM-TEXT CONSISTENCY: Every callout number, pinout ID, or stud rating in your text MUST match the exact diagram image embedded. Never cite callout numbers from an electric/BEV diagram when describing an ICE vehicle (e.g., do not cite BEV points 1–45 when answering for ICE points 49–88). If the only retrieved diagram has a 'BEV' header and the query is ICE, DO NOT embed that image; explain that the ICE diagram is missing from the indexed results.",
-    options_enumeration_rule:
-      "BROAD QUERY ENUMERATION: When an inquiry is open-ended (e.g., available ground locations, power taps, or mounting zones), do not group items into vague ranges or pick a single favorite. Present a structured, complete inventory of all documented options from the retrieved chunks using compact Markdown tables with their key differentiating parameters (Location, Stud/Thread Spec, Max Rating, Constraints).",
-    schematic_rule:
-      "MANDATORY DIAGRAMS: Whenever a chunk contains a 'schematic_url', you MUST embed it inline in your markdown response using: ![<Diagram Title>](<schematic_url>).",
-  };
+  const baseContract: RetrievalContract = buildBaseRetrievalContract();
 
   if (!matchesFound) {
     baseContract.no_matches_guidance =

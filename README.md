@@ -326,6 +326,8 @@ Requires `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` environment variable
 
 See [`AGENTS.md`](./AGENTS.md) for repository conventions and rules that apply to automated/AI contributors (deterministic calculations, migration policy, schema validation with Zod, and testing thresholds), which are also good practices for human contributors.
 
+**Engineering docs:** [`docs/engineering/retrieval-pipeline.md`](./docs/engineering/retrieval-pipeline.md) (how retrieval, powertrain tagging and the LLM contract work) and [`docs/engineering/local-dev-loop.md`](./docs/engineering/local-dev-loop.md) (test unpushed code against the dev data with `pnpm local:*`).
+
 
 ### Universal Retrieval Pipeline & Search Mechanics
 

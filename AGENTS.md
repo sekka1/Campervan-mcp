@@ -4,6 +4,40 @@ Welcome AI Agent. This repository contains a production-grade Model Context Prot
 
 ---
 
+## 0. Start Here: Engineering Docs & Local Dev Loop
+
+Do **not** re-derive how retrieval works or how to test it. Read these first:
+
+- [`docs/engineering/retrieval-pipeline.md`](docs/engineering/retrieval-pipeline.md) — data model, ingestion-time ICE/BEV tagging, the 10-step query pipeline (`hybridSearch`), the ICE-default policy, PR #70–#74 history, the retrieval contract the LLM receives, known limitations, and a verification checklist.
+- [`docs/engineering/local-dev-loop.md`](docs/engineering/local-dev-loop.md) — run your **local, unpushed** `src/` against the dev D1/Vectorize with `pnpm local:probe | local:trace | local:sql | local:server | local:ask`, plus a debugging playbook ("answer is bad / missing diagram").
+
+Hard-won rules (details in those docs):
+1. **Diagnose with data before changing code.** Check stored tags/pages (`pnpm local:sql`) and the stage at which a chunk is lost (`pnpm local:trace`). Re-ingesting does not change powertrain tags unless the classifier code changed.
+2. **Generic-first (examples are not rules).** Never add logic, contract text or prompts that name a page, part, vehicle, model year or circuit you just saw (a unit test enforces this for the grounding rules). Classify the failure and fix the *class* with a mechanism, a contract principle or a deterministic check — see `retrieval-pipeline.md` §8. Concrete cases belong only in labeled test fixtures/promptfoo regressions. Sprinter, Ram/ProMaster, batteries, HVAC, air and water systems must all work through the same code.
+3. **LLM freedom, grounded.** The retrieval contract (`buildBaseRetrievalContract()` in `src/tools/manuals.ts`, single source) lets the model explain and advise, but anything attributed to a manual must come from retrieved chunks, and all other advice must be labeled "General guidance (not from the indexed manuals)". Extend the builder, not inline copies.
+4. **Verify the synthesized answer**, not just retrieval: `pnpm local:ask` (it runs `scripts/grounding-check.mjs`, which flags specs/sections/pages/part numbers/standards no tool returned), then spot-check quoted claims against D1 text. The checker proves presence, not attribution.
+5. `.campervan-d1.env` holds real credentials: never commit it, print it, or paste its contents.
+
+---
+
+## 0.1 When You Find a Specific Problem: Generalize It First
+
+Bugs and bad answers will keep showing up one concrete case at a time (a missing diagram on one platform, an invented rule on another, a wrong recommendation for one circuit). **The concrete case is a symptom. Never fix it with a one-off.** Every platform (Transit, Sprinter, Ram/ProMaster) and system (electrical, batteries, HVAC, air, water, plumbing) must benefit from the fix. Follow this procedure every time:
+
+1. **Reproduce and diagnose with real data** (`docs/engineering/local-dev-loop.md`): `pnpm local:sql` (what is stored), `pnpm local:trace` (which retrieval stage loses it), `pnpm local:probe` (what is returned), `pnpm local:ask` (what the model says + grounding check). Don't guess, and don't assume re-ingesting helps.
+2. **Name the failure class, not the instance.** Strip out the page, part, vehicle, model year and circuit. Ask: "what general situation is this an example of?" (e.g. *a section split across variants*, *a model stating something no source says*, *recommending an item whose documented purpose differs from the user's use*, *calling an incomplete list complete*).
+3. **Pick the layer that fixes the class** (table in `docs/engineering/retrieval-pipeline.md` §8): retrieval mechanism, ingestion classifier, contract principle in `buildBaseRetrievalContract()`, deterministic check (`scripts/grounding-check.mjs`), or formula code. Prefer mechanisms and deterministic checks over adding prompt text; prefer one principle with several cross-domain examples over a list of cases.
+4. **Write the fix with no hardcoded specifics**: no vehicle, brand, model-year, page, part-number or circuit names in logic or contract text (`tests/unit/retrieval-contract.test.ts` enforces this for the contract). Examples may appear in comments and docs only if labeled as examples.
+5. **Test the class, then the instance.** Unit tests use neutral synthetic fixtures (see `tests/unit/powertrain-continuation.test.ts`, `scripts/__tests__/grounding-check.test.ts`). The original real-world case goes in `promptfooconfig.yaml` as a clearly labeled regression, with generic-principle assertions alongside any data-specific ones.
+6. **Verify end to end** with `pnpm local:ask` before opening a PR, and confirm the fix would also hold for a different platform or system (ask yourself, or test, a Sprinter/Ram/battery/HVAC/plumbing variant of the same situation).
+7. **Document the class, not the case**: update `docs/engineering/retrieval-pipeline.md` (what the class is and which mechanism now covers it; add known limits). Keep platform-specific details to a short "example" line.
+
+Worked example (PR #74/#75): one platform's grounding answer lacked the diagram, invented rules and recommended a fuel-circuit ground. The fixes were: section-continuity-aware neighbour promotion and variant-neutral section notes (retrieval mechanisms), purpose-matching and evidence-labeling contract principles, and a deterministic claim checker — none names that platform's pages or circuits.
+
+If you cannot express a fix without naming a specific vehicle, part or page, stop and re-do step 2 — or ask the user.
+
+---
+
 ## 1. Architectural Philosophy: The Strict Division of Concerns
 
 This system operates on a fundamental division of responsibilities:
