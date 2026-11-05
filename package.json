@@ -17,7 +17,12 @@
     "sync:r2": "tsx scripts/sync-r2-manuals.ts",
     "e2e:vectorize": "tsx scripts/e2e-vectorize-smoke-test.ts",
     "test:live": "RUN_LIVE_TESTS=true vitest run tests/live/smoke.test.ts",
-    "test:integration": "vitest run tests/integration"
+    "test:integration": "vitest run tests/integration",
+    "local:server": "tsx --env-file=.campervan-d1.env local/server.ts",
+    "local:probe": "tsx --env-file=.campervan-d1.env local/probe.ts",
+    "local:trace": "tsx --env-file=.campervan-d1.env local/trace.ts",
+    "local:sql": "tsx --env-file=.campervan-d1.env local/sql.ts",
+    "local:ask": "tsx --env-file=.campervan-d1.env local/ask.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1098.0",

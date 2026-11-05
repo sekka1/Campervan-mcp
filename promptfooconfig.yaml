@@ -166,7 +166,7 @@ tests:
       - type: not-icontains
         value: "Megabrace"
       - type: llm-rubric
-        value: "Defaults to the ICE (gas/diesel) Transit without asking whether the user has an EV. Embeds or links the ICE ground point diagram (page 151, 'ICE Van, Wagon and Common Ground Points') and lists ICE ground points from the 49-88 table (page 153). Must NOT cite BEV callout numbers (1-48) or the BEV diagram E185976b, and must NOT say the diagram was unavailable or not extracted."
+        value: "Defaults to the ICE (gas/diesel) Transit without asking whether the user has an EV. Embeds or links the ICE ground point diagram (page 151, 'ICE Van, Wagon and Common Ground Points') and lists ICE ground points from the 49-88 table (page 153). Must NOT cite BEV callout numbers (1-48) or the BEV diagram E185976b, and must NOT say the diagram was unavailable or not extracted. Grounding: every statement attributed to the manual must be supported by retrieved text; any advice from general knowledge must be explicitly labeled as general guidance; must NOT quote numeric requirements from external standards (e.g. ABYC wire gauges) from memory; must NOT recommend a ground point whose documented use is another vehicle system (e.g. Fuel Tank Sender) for auxiliary loads; must present the manual's approved method for add-on loads (dedicated ground to body ground or battery negative spare stud) and note any gaps in the point numbering."
       - type: latency
         threshold: 180000
 

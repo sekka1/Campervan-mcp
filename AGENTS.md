@@ -4,6 +4,22 @@ Welcome AI Agent. This repository contains a production-grade Model Context Prot
 
 ---
 
+## 0. Start Here: Engineering Docs & Local Dev Loop
+
+Do **not** re-derive how retrieval works or how to test it. Read these first:
+
+- [`docs/engineering/retrieval-pipeline.md`](docs/engineering/retrieval-pipeline.md) — data model, ingestion-time ICE/BEV tagging, the 10-step query pipeline (`hybridSearch`), the ICE-default policy, PR #70–#74 history, the retrieval contract the LLM receives, known limitations, and a verification checklist.
+- [`docs/engineering/local-dev-loop.md`](docs/engineering/local-dev-loop.md) — run your **local, unpushed** `src/` against the dev D1/Vectorize with `pnpm local:probe | local:trace | local:sql | local:server | local:ask`, plus a debugging playbook ("answer is bad / missing diagram").
+
+Hard-won rules (details in those docs):
+1. **Diagnose with data before changing code.** Check stored tags/pages (`pnpm local:sql`) and the stage at which a chunk is lost (`pnpm local:trace`). Re-ingesting does not change powertrain tags unless the classifier code changed.
+2. **Fix retrieval generically.** No vehicle-, model-year- or component-specific logic or contract text (a unit test enforces this for the grounding rules). Sprinter, Ram/ProMaster, batteries, HVAC and plumbing must all work through the same code.
+3. **LLM freedom, grounded.** The retrieval contract (`buildBaseRetrievalContract()` in `src/tools/manuals.ts`, single source) lets the model explain and advise, but anything attributed to a manual must come from retrieved chunks, and all other advice must be labeled "General guidance (not from the indexed manuals)". Extend the builder, not inline copies.
+4. **Verify the synthesized answer**, not just retrieval: `pnpm local:ask`, then spot-check quoted claims against D1 text.
+5. `.campervan-d1.env` holds real credentials: never commit it, print it, or paste its contents.
+
+---
+
 ## 1. Architectural Philosophy: The Strict Division of Concerns
 
 This system operates on a fundamental division of responsibilities:
