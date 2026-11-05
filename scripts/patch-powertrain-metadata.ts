@@ -10,13 +10,20 @@
  *   npx tsx scripts/patch-powertrain-metadata.ts [--dry-run]
  */
 
-import { CLOUDFLARE_API_BASE, executeD1Statements, type D1Statement } from "./ingest-manuals";
+import {
+  BEV_MARKER_REGEX,
+  COMBUSTION_MARKER_REGEX,
+  CLOUDFLARE_API_BASE,
+  classifyChunkPowertrain,
+  classifyPowertrainText,
+  executeD1Statements,
+  findBevOnlyPages,
+  type D1Statement,
+} from "./ingest-manuals";
 
-export const BEV_SCAN_REGEX =
-  /\b(bev|e-transit|etransit|esprinter|promaster[\s-]ev|traction battery|hv battery|megabrace|high[\s-]voltage\s+(?:battery|traction|system|interlock|disconnect|cable|inverter)|e185976b)\b/i;
-
-export const ICE_SCAN_REGEX =
-  /\b(ice|gas|gasoline|diesel|alternator|om654|ecoboost)\b/i;
+/** Aliases of the shared ingest regexes (single definition; do not fork them here). */
+export const BEV_SCAN_REGEX = BEV_MARKER_REGEX;
+export const ICE_SCAN_REGEX = COMBUSTION_MARKER_REGEX;
 
 export interface D1ChunkRecord {
   id: string;
@@ -50,11 +57,10 @@ export function computePatchedChunkMetadata(chunk: {
   shouldSeverImage: boolean;
   newMetadataJson: string;
 } {
-  const combinedText = `${chunk.section_title || ""} ${chunk.chunk_text}`.toLowerCase();
-  const imageDetails = `${chunk.image_caption || ""} ${chunk.image_r2_key || ""}`.toLowerCase();
-  const docTitle = (chunk.doc_title || "").toLowerCase();
+  const imageDetails = `${chunk.image_caption || ""} ${chunk.image_r2_key || ""}`;
 
-  // Check existing chunk metadata_json first
+  // Existing chunk metadata is kept for its other keys (year, chassis code...) but its OLD powertrain tags are never
+  // consulted: the tag is recomputed from the text with the shared ingest classifier, so a wrong tag can be repaired.
   let existingPouch: Record<string, unknown> = {};
   if (chunk.metadata_json) {
     try {
@@ -65,7 +71,7 @@ export function computePatchedChunkMetadata(chunk: {
     } catch {}
   }
 
-  // Check parent document metadata_json
+  // Parent document metadata_json (a document explicitly tagged BEV forces BEV, exactly as at ingestion)
   let docPouch: Record<string, unknown> = {};
   if (chunk.doc_metadata_json) {
     try {
@@ -76,41 +82,23 @@ export function computePatchedChunkMetadata(chunk: {
     } catch {}
   }
 
-  let fuel: "bev" | "ice" | "all" = "all";
-  let powertrain: "bev" | "ice" | "all" = "all";
-
-  // 1. Text markers take precedence
-  if (BEV_SCAN_REGEX.test(combinedText)) {
-    fuel = "bev";
-    powertrain = "bev";
-  } else if (ICE_SCAN_REGEX.test(combinedText)) {
-    fuel = "ice";
-    powertrain = "ice";
-  } else if (existingPouch.fuel === "bev" || existingPouch.powertrain === "bev") {
-    // 2. Preserve pre-existing BEV metadata on chunk
-    fuel = "bev";
-    powertrain = "bev";
-  } else if (docPouch.fuel === "bev" || docPouch.powertrain === "bev" || BEV_SCAN_REGEX.test(docTitle)) {
-    // 3. Inherit parent document BEV classification
-    fuel = "bev";
-    powertrain = "bev";
-  } else if (chunk.applicable_chassis === "universal") {
-    // 4. Generic universal component documentation defaults to "all"
-    fuel = "all";
-    powertrain = "all";
-  } else {
-    // 5. Default vehicle-specific chassis chunks to ICE
-    fuel = "ice";
-    powertrain = "ice";
-  }
+  const fuel = classifyChunkPowertrain({
+    sectionTitle: chunk.section_title,
+    text: chunk.chunk_text,
+    applicableChassis: chunk.applicable_chassis,
+    docFuel: docPouch.fuel === "bev" || docPouch.powertrain === "bev" ? "bev" : undefined,
+  });
+  const powertrain = fuel;
 
   const pouch = { ...existingPouch, fuel, powertrain };
 
   // Classify whether the attached diagram is a BEV diagram using:
   // - page content (chunk.is_page_bev)
   // - image caption or r2 key
-  const isImageBev = Boolean(chunk.is_page_bev) || BEV_SCAN_REGEX.test(imageDetails);
-  const shouldSeverImage = fuel === "ice" && isImageBev;
+  const isImageBev = Boolean(chunk.is_page_bev) || classifyPowertrainText(imageDetails) === "bev";
+  // Only an image that is actually linked can be severed (the LEFT JOIN yields no caption/key otherwise).
+  const hasLinkedImage = Boolean(chunk.image_caption || chunk.image_r2_key);
+  const shouldSeverImage = fuel === "ice" && hasLinkedImage && isImageBev;
 
   return {
     fuel,
@@ -164,14 +152,16 @@ export async function runPowertrainPatch(options: {
   const rows = queryJson.result?.[0]?.results || [];
   console.log(`Found ${rows.length} chunk records in D1.`);
 
-  // Pass 1: Gather page-level BEV text evidence across chunks
-  const bevPages = new Set<string>();
-  for (const row of rows) {
-    const combined = `${row.section_title || ""} ${row.chunk_text}`.toLowerCase();
-    if (BEV_SCAN_REGEX.test(combined) && row.document_id && row.page_number !== undefined && row.page_number !== null) {
-      bevPages.add(`${row.document_id}#${row.page_number}`);
-    }
-  }
+  // Pass 1: pages whose content is BEV-only (shared with ingestion; mixed pages and page legends do not count)
+  const bevPages = findBevOnlyPages(
+    rows
+      .filter((row) => row.document_id && row.page_number !== undefined && row.page_number !== null)
+      .map((row) => ({
+        page: `${row.document_id}#${row.page_number}`,
+        sectionTitle: row.section_title,
+        text: row.chunk_text,
+      }))
+  );
 
   const updateStatements: D1Statement[] = [];
   let severedImages = 0;
