@@ -119,7 +119,7 @@ Before committing or submitting a PR, agents must ensure all quality gates pass:
    - Verify that D1 search queries bind keywords cleanly without hardcoded parameter pollution.
    - Verify that embedding generation throws an error when the AI binding is unavailable.
 3. **Post-Deployment Live Smoke Tests (`tests/live/`):**
-   - Any live test must assert that `search_van_manuals` returns positive cosine similarity scores (`score > 0.60`, strictly `score !== -1`), returns `count === 8` by default, and populates `source` and `document_title` (never `"unknown"`).
+   - Any live test must assert that `search_van_manuals` returns `count === 8` by default, that every result has a sane positive score (`0 < score <= 1`, strictly `score !== -1`), that the **best** result has `score > 0.60`, that the top results are topically about the query, and that `source` and `document_title` are populated (never `"unknown"`). Do **not** require every result to exceed 0.60: results are RRF-fused from vector and keyword rankings, so a chunk that ranks well on both can have a lower cosine score, and keyword-only candidates carry a fixed synthetic 0.75 (see `docs/engineering/retrieval-pipeline.md` §3). A per-result 0.60 floor only passed historically because synthetic scores masked missing semantic matches.
 4. **Pre-Commit Verification:**
    - Run `pnpm lint` and `pnpm test`. Never commit code with known failing lint, typecheck, or test results.
 
