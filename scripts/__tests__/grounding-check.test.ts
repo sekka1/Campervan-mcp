@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { findUngroundedClaims, groundingAssertion, parseProviderOutput } from "../grounding-check.mjs";
+import { findEndorsedListItems, findUngroundedClaims, groundingAssertion, parseProviderOutput } from "../grounding-check.mjs";
 
 // Deliberately NOT vehicle-specific: the checker must work for any system (water heater here).
 function trace(results: Array<Record<string, unknown>>): string {
@@ -61,5 +61,41 @@ describe("grounding-check", () => {
 
   it("skips when there is no tool evidence", () => {
     expect(groundingAssertion("just an answer with 40A", {}).pass).toBe(true);
+  });
+
+  describe("own advice must not endorse documented list items", () => {
+    // Neutral synthetic table: a drain-valve list where each row is documented for a different purpose.
+    const TABLE = {
+      page: 7,
+      section: "5.1 Valve Positions",
+      text: "| Item # | Purpose |\n| 11 | Waste drain |\n| 12 | Potable fill |\n| 13 | Waste drain |",
+    };
+    const answerWith = (guidance: string) =>
+      `${trace([TABLE])}\n\nThe manual lists valves (Section 5.1, p. 7).\n\n## General Guidance (not from the indexed manuals)\n\n${guidance}\n\n---\n\nAnswer basis: indexed manual.`;
+
+    it("flags specific documented item numbers named in the general-guidance section", () => {
+      const output = answerWith("- For a new line, use the documented valves (items 11/13) rather than a body panel.");
+      const { answer, evidence } = parseProviderOutput(output);
+      expect(findEndorsedListItems({ answer, evidence }).map((c) => c.value).sort()).toEqual(["11", "13"]);
+      const res = groundingAssertion(output, { vars: { question: "which valve?" } });
+      expect(res.pass).toBe(false);
+      expect(res.reason).toContain("endorsed-item");
+    });
+
+    it("allows generic own advice and item numbers cited inside the manual-attributed part", () => {
+      const output = answerWith("- Create a dedicated, clean, bare-metal location and keep runs short.").replace(
+        "The manual lists valves",
+        "The manual lists valves (items 11, 12 and 13)"
+      );
+      const { answer, evidence } = parseProviderOutput(output);
+      expect(findEndorsedListItems({ answer, evidence })).toEqual([]);
+      expect(groundingAssertion(output, { vars: { question: "which valve?" } }).pass).toBe(true);
+    });
+
+    it("ignores numbers in own advice that are not documented list items", () => {
+      const output = answerWith("- Use item 99 from your own parts bin.");
+      const { answer, evidence } = parseProviderOutput(output);
+      expect(findEndorsedListItems({ answer, evidence })).toEqual([]);
+    });
   });
 });
