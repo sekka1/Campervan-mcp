@@ -442,18 +442,23 @@ export const BOILERPLATE_TOKEN_DOC_RATIO = 0.6;
 const BOILERPLATE_MIN_DOC_CHUNKS = 20;
 
 /**
- * Drops query tokens that appear in most chunks of a document (page banners, the make/model/year printed on
- * every page, section footers). Such tokens match everything equally, so in keyword ranking they only pull in
- * unrelated chunks (e.g. every page of an unrelated chapter) and crowd out the real answer; semantic search
- * and the metadata filters already handle "which vehicle". Generic: no vocabulary is hardcoded; it is measured
- * per document in the caller's filter scope. If every token would be dropped, all are kept.
+ * Finds, per document, the query tokens that appear in most of that document's chunks (page banners, the
+ * make/model/year printed on every page, section footers). Such a token matches everything in that document
+ * equally, so in keyword ranking it only pulls in unrelated chunks and crowds out the real answer; semantic search
+ * and the metadata filters already handle "which vehicle".
+ *
+ * Returns token -> ids of documents in which it is boilerplate. Suppression is PER DOCUMENT: a word that is
+ * boilerplate in one manual still matches normally in every other manual. Within a document, if every query token
+ * would be suppressed, none are (keyword search would otherwise lose all signal there). Measured in the caller's
+ * filter scope with no hardcoded vocabulary; returns an empty map if statistics are unavailable.
  */
-export async function dropBoilerplateTokens(
+export async function findBoilerplateTokensByDocument(
   db: D1Database,
   tokens: string[],
   filters: HydrateFilterOptions = {}
-): Promise<string[]> {
-  if (tokens.length < 2) return tokens;
+): Promise<Map<string, Set<string>>> {
+  const suppressed = new Map<string, Set<string>>();
+  if (tokens.length < 2) return suppressed;
   try {
     const scope = buildKeywordScopeConditions(filters);
     const selects = tokens.map(
@@ -466,20 +471,24 @@ export async function dropBoilerplateTokens(
     const { results } = await db
       .prepare(query)
       .bind(...tokens.map((t) => `%${t}%`), ...scope.params)
-      .all<Record<string, number>>();
+      .all<Record<string, number | string>>();
 
-    const docs = (results ?? []).filter((r) => Number(r["n"]) >= BOILERPLATE_MIN_DOC_CHUNKS);
-    if (docs.length === 0) return tokens;
-
-    const kept = tokens.filter((_, i) => {
-      const ratio = Math.max(...docs.map((r) => Number(r[`t${i}`] ?? 0) / Number(r["n"])));
-      return !(ratio > BOILERPLATE_TOKEN_DOC_RATIO);
-    });
-    return kept.length > 0 ? kept : tokens;
+    for (const row of results ?? []) {
+      const n = Number(row["n"]);
+      if (!(n >= BOILERPLATE_MIN_DOC_CHUNKS)) continue; // tiny documents skew ratios
+      const flagged = tokens.filter((_, i) => Number(row[`t${i}`] ?? 0) / n > BOILERPLATE_TOKEN_DOC_RATIO);
+      if (flagged.length === 0 || flagged.length === tokens.length) continue;
+      for (const token of flagged) {
+        const docs = suppressed.get(token) ?? new Set<string>();
+        docs.add(String(row["doc"]));
+        suppressed.set(token, docs);
+      }
+    }
   } catch (err) {
     console.warn("Boilerplate-token statistics unavailable; using all tokens:", err);
-    return tokens;
+    return new Map();
   }
+  return suppressed;
 }
 
 /**
@@ -493,19 +502,30 @@ export async function searchD1KeywordCandidates(
 ): Promise<Array<{ id: string; score: number }>> {
   if (tokens.length === 0) return [];
 
-  const queryTokens = (await dropBoilerplateTokens(db, tokens.slice(0, 8), filters));
+  const queryTokens = tokens.slice(0, 8);
+  const suppressed = await findBoilerplateTokensByDocument(db, queryTokens, filters);
   const conditions: string[] = [];
   const params: unknown[] = [];
 
+  // Per token: an optional "this document does not treat the token as boilerplate" guard.
+  const guardFor = (token: string): { sql: string; ids: string[] } => {
+    const ids = Array.from(suppressed.get(token) ?? []);
+    return ids.length === 0
+      ? { sql: "1=1", ids }
+      : { sql: `c.document_id NOT IN (${ids.map(() => "?").join(", ")})`, ids };
+  };
+
   const scoreParts = queryTokens.map((t) => {
-    params.push(`%${t}%`, `%${t}%`);
-    return `(CASE WHEN LOWER(c.chunk_text) LIKE ? THEN 2 ELSE 0 END + CASE WHEN LOWER(COALESCE(c.section_title, '')) LIKE ? THEN 3 ELSE 0 END)`;
+    const g = guardFor(t);
+    params.push(...g.ids, `%${t}%`, ...g.ids, `%${t}%`);
+    return `(CASE WHEN ${g.sql} AND LOWER(c.chunk_text) LIKE ? THEN 2 ELSE 0 END + CASE WHEN ${g.sql} AND LOWER(COALESCE(c.section_title, '')) LIKE ? THEN 3 ELSE 0 END)`;
   });
 
-  const tokenOrClauses = queryTokens.map(() => `(LOWER(c.chunk_text) LIKE ? OR LOWER(COALESCE(c.section_title, '')) LIKE ?)`);
-  for (const t of queryTokens) {
-    params.push(`%${t}%`, `%${t}%`);
-  }
+  const tokenOrClauses = queryTokens.map((t) => {
+    const g = guardFor(t);
+    params.push(...g.ids, `%${t}%`, `%${t}%`);
+    return `(${g.sql} AND (LOWER(c.chunk_text) LIKE ? OR LOWER(COALESCE(c.section_title, '')) LIKE ?))`;
+  });
 
   conditions.push(`(${tokenOrClauses.join(" OR ")})`);
 
@@ -1009,7 +1029,7 @@ export async function promoteNonBevNeighbors(
         sectionNotes
           ? {
               ...row,
-              chunk_text: `[Section notes from page ${chunk.page_number}, the opener of this section (variant-specific sentences omitted); the content below is from page ${row.page_number}]: ${sectionNotes}\n\n${row.chunk_text}`,
+              chunk_text: `[Section notes from page ${chunk.page_number}, the opener of this section (variant-specific sentences omitted); the content below starts on page ${row.page_number} and may continue onto later pages]: ${sectionNotes}\n\n${row.chunk_text}`,
             }
           : row;
 

@@ -61,11 +61,13 @@ Order of operations (every step is a place a chunk can be lost; use `pnpm local:
    `top_k` precisely so post-filters don't starve the result, PR #72).
 3. **Keyword search** `searchD1KeywordCandidates`: stop-word-filtered tokens (≥3 chars), scores chunks by
    token hits in `chunk_text` (+2) and `section_title` (+3). Respects category/manufacturer/model/market/year filters.
-   First runs **`dropBoilerplateTokens`**: any token found in more than 60 % of a document's chunks (page banners,
-   the make/model/year printed on every page, section footers) is dropped, because it matches everything equally and
-   only drags in unrelated chunks; semantic search and the metadata filters already handle "which vehicle". It is
-   measured per document in the caller's filter scope (no hardcoded vocabulary); if every token would be dropped,
-   all are kept. One extra grouped `COUNT` query per search; falls back to all tokens if it fails.
+   First runs **`findBoilerplateTokensByDocument`**: a token found in more than 60 % of a *document's* chunks (page banners,
+   the make/model/year printed on every page, section footers) is suppressed **in that document only** (an
+   `c.document_id NOT IN (…)` guard in the keyword SQL), because there it matches everything equally and only drags in
+   unrelated chunks; the same word still matches normally in other manuals. Semantic search and the metadata filters
+   already handle "which vehicle". Measured per document in the caller's filter scope (no hardcoded vocabulary);
+   documents under 20 chunks are ignored; if every token would be suppressed in a document, none are. One extra
+   grouped `COUNT` query per search; no suppression if it fails.
 4. **RRF fusion** `reciprocalRankFusion` (`1/(60+rank)`). Keyword-only hits get a **synthetic score of 0.75**
    (that is why many results show exactly `0.750`; it is not a cosine score, and is **not comparable** to real
    similarities — never sort by raw `score` across sources).
@@ -121,7 +123,7 @@ replaced them, and p151's numeric-only text never ranked on its own.
 
 Same class of problem, second half: the dropped opener also carried CAUTION/WARNING/NOTE text that applies to *every*
 variant. Rather than keep the BEV page (and its BEV callouts) or lose the cautions, the first promoted chunk gets a
-prefix `[Section notes from page <N>, the opener of this section (variant-specific sentences omitted); the content below is from page <M>]: …` built by:
+prefix `[Section notes from page <N>, the opener of this section (variant-specific sentences omitted); the content below starts on page <M> and may continue onto later pages]: …` built by:
 keep CAUTION/WARNING/NOTE/IMPORTANT blocks; drop any sentence matching the other variant's markers
 (`BEV_CONTENT_REGEX`) **and the rest of that block** (later sentences usually depend on it); drop non-prose
 (figure labels, table cells). It works on any manual that has variant-tagged openers (diesel vs electric, 12 V vs 48 V
@@ -131,7 +133,7 @@ if markers are added, etc.) and never injects variant-specific callouts, so `dia
 
 **Known limitations / future work (deliberately not done):**
 - (Resolved) A dropped opener's variant-neutral CAUTION/WARNING/NOTE prose is now preserved — see §5.1.
-- (Resolved) Keyword noise from tokens that appear on every page — see `dropBoilerplateTokens` (step 3) — and the
+- (Resolved) Keyword noise from tokens that appear on every page — see `findBoilerplateTokensByDocument` (step 3) — and the
   fused order being overridden by raw scores — see step 8. Symptom that led to both: a short query returned
   unrelated chapters (suspension/brake pages) instead of the section describing the approved method for add-on loads.
   Diagnosis recipe: `pnpm local:trace` (is the right chunk in FUSED?) vs `pnpm local:probe` (is it in the output?).
