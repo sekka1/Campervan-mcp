@@ -834,6 +834,20 @@ export async function hydrateChunks(
   return map;
 }
 
+/** Numbered section headings such as "4.25 Grounding" or "4.25.1 Ground Points" (at least two levels). */
+const SECTION_HEADING_REGEX = /\b(\d{1,2}(?:\.\d{1,3}){1,3})\s+[A-Z][A-Za-z]/g;
+
+/** Numbered headings found in a chunk's own text (page boilerplate removed), in order. */
+export function extractSectionNumbers(text: string | null | undefined): string[] {
+  if (!text) return [];
+  return Array.from(stripPageBoilerplate(text).matchAll(SECTION_HEADING_REGEX), (m) => m[1]!);
+}
+
+/** "4.25.1" -> "4.25": the top two levels identify the section a chunk belongs to. */
+function sectionRoot(num: string): string {
+  return num.split(".").slice(0, 2).join(".");
+}
+
 /**
  * Powertrain-aware section continuation.
  *
@@ -841,7 +855,13 @@ export async function hydrateChunks(
  * ICE figure and table that complete the section sit on the following pages. For a non-BEV query
  * the BEV parent is later dropped, which would also lose its ICE continuation (stitching refuses to
  * cross powertrains). So for the top-ranked BEV chunks we promote their non-BEV neighbours from the
- * next few pages into the candidate set, inheriting the parent's rank and section title.
+ * next few pages, inserting them immediately after the parent so they inherit its rank even when the
+ * final comparator treats peers as ties.
+ *
+ * Section continuity: walking forward page by page, we stop at the first neighbour whose text starts
+ * a numbered heading outside the parent's section (or any numbered heading, if the parent's section
+ * cannot be determined), so an unrelated section never inherits the parent's rank or label.
+ * Neighbours that are already candidates are moved up next to the parent instead of duplicated.
  * Mutates `matches` and `hydrated`.
  */
 export async function promoteNonBevNeighbors(
@@ -882,24 +902,51 @@ export async function promoteNonBevNeighbors(
         .bind(chunk.document_id, chunk.page_number, chunk.page_number + pageWindow)
         .all<HydratedChunk>();
 
+      // Prefer the parent's own heading; fall back to the first heading in its text (later numbers are
+      // usually cross-references such as "Refer to: 5.1.2 Welding").
+      const parentNumber =
+        extractSectionNumbers(chunk.section_title)[0] ?? extractSectionNumbers(chunk.chunk_text)[0];
+      const parentRoot = parentNumber ? sectionRoot(parentNumber) : null;
+      const parentHeadingLabel = chunk.section_title && extractSectionNumbers(chunk.section_title).length > 0
+        ? chunk.section_title
+        : null;
+
       let promoted = 0;
+      let insertAt = matches.findIndex((m) => m.id === match.id) + 1;
       for (const row of results ?? []) {
         if (promoted >= maxPerParent) break;
-        if (hydrated.has(row.id)) continue;
+
+        const headings = extractSectionNumbers(row.chunk_text);
+        const leavesSection = parentRoot
+          ? headings.some((h) => sectionRoot(h) !== parentRoot)
+          : headings.length > 0;
+        if (leavesSection) break; // section boundary: nothing further belongs to the parent
+
         if (extractChunkFuelType(row) === "bev") continue;
 
-        hydrated.set(row.id, {
-          ...row,
-          section_title: chunk.section_title
-            ? `${chunk.section_title} (continued on p${row.page_number})`
-            : row.section_title,
-        });
+        const existingIdx = matches.findIndex((m) => m.id === row.id);
+        if (existingIdx !== -1) {
+          // Already a candidate (possibly ranked below top_k): move it up beside the parent.
+          if (existingIdx < insertAt) continue;
+          const [existing] = matches.splice(existingIdx, 1);
+          existing!.score = Math.max(existing!.score, match.score - 0.001 * (promoted + 1));
+          matches.splice(insertAt, 0, existing!);
+        } else {
+          const label =
+            extractSectionNumbers(row.section_title).length > 0
+              ? row.section_title
+              : parentHeadingLabel
+                ? `${parentHeadingLabel} (continued on p${row.page_number})`
+                : row.section_title;
+          hydrated.set(row.id, { ...row, section_title: label });
+          matches.splice(insertAt, 0, {
+            id: row.id,
+            score: match.score - 0.001 * (promoted + 1),
+            metadata: { ...match.metadata },
+          });
+        }
+        insertAt++;
         promoted++;
-        matches.push({
-          id: row.id,
-          score: match.score - 0.001 * promoted,
-          metadata: { ...match.metadata },
-        });
       }
     } catch (err) {
       console.warn("Non-BEV neighbour promotion failed:", err);

@@ -5,6 +5,8 @@ import { makeLocalEnv } from "./env.js";
 
 const env = makeLocalEnv();
 const port = Number(process.env["PORT"] ?? 8787);
+// Loopback only: this harness runs with auth/metering off and real dev credentials.
+const host = process.env["HOST"] ?? "127.0.0.1";
 
 http
   .createServer(async (req, res) => {
@@ -25,4 +27,4 @@ http
       res.writeHead(500).end(String(e));
     }
   })
-  .listen(port, () => console.log(`local MCP worker on http://localhost:${port}`));
+  .listen(port, host, () => console.log(`local MCP worker on http://${host}:${port}`));
