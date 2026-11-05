@@ -58,7 +58,17 @@ Order of operations (every step is a place a chunk can be lost; use `pnpm local:
 
 1. **Embed** the query (`DEEPINFRA_TOKEN`/BGE; or Workers AI `env.AI`). Embedding failure must throw (AGENTS.md: no zero-vectors).
 2. **Vector search** `searchManuals` → Vectorize `topK = candidatePoolSize = max(topK*3, 24)` (pool is wider than
-   `top_k` precisely so post-filters don't starve the result, PR #72).
+   `top_k` precisely so post-filters don't starve the result, PR #72). **Edition pre-filter:** if the edition-narrowing
+   filters (manufacturer / model / market / model year / category) exclude some indexed documents, `resolveEditionScope`
+   asks D1 which documents qualify (one tiny query over the `documents` table), the pool grows to the maximum Vectorize
+   allows without metadata (`MAX_FILTERED_CANDIDATE_POOL` = 100, `returnMetadata: "indexed"`; it is 50 with `"all"`),
+   and only candidates whose chunk id belongs to an allowed document are kept. Why: Vectorize has **no metadata indexes**
+   on the dev index, so these facets cannot be filtered inside Vectorize; applied after the search, near-identical editions
+   split the top-N between them (e.g. 4 of 24 candidates for the requested year) and keyword-only filler took the rest.
+   Measured on 3 indexed editions: keyword-only filler in the top 8 fell from 4-6 to 0-3 across 9 query/edition cases.
+   Falls back to the old behaviour (filter after ranking) if the lookup fails or returns an unusable shape. Long-term
+   fix: Vectorize metadata indexes on a document-level property plus a re-ingest (indexes only apply to vectors inserted
+   after they are created).
 3. **Keyword search** `searchD1KeywordCandidates`: stop-word-filtered tokens (≥3 chars), scores chunks by
    token hits in `chunk_text` (+2) and `section_title` (+3). Respects category/manufacturer/model/market/year filters.
    First runs **`findBoilerplateTokensByDocument`**: a token found in more than 60 % of a *document's* chunks (page banners,

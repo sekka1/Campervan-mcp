@@ -118,12 +118,14 @@ export async function searchManuals(
   options: {
     topK?: number;
     filter?: VectorizeVectorMetadataFilter;
+    /** Vectorize allows topK up to 50 with "all" metadata, but up to 100 with "indexed"/"none". */
+    returnMetadata?: "all" | "indexed" | "none";
   } = {}
 ): Promise<ManualChunk[]> {
   try {
     const queryOptions: VectorizeQueryOptions = {
       topK: options.topK ?? 8,
-      returnMetadata: "all",
+      returnMetadata: options.returnMetadata ?? "all",
     };
     if (options.filter !== undefined) {
       queryOptions.filter = options.filter;
@@ -1144,6 +1146,45 @@ export async function hybridSearch(
   return (await hybridSearchDetailed(vectorIndex, db, queryVector, options)).results;
 }
 
+/** Largest candidate pool Vectorize allows when metadata is not returned (50 with metadata "all"). */
+export const MAX_FILTERED_CANDIDATE_POOL = 100;
+
+function documentIdOf(chunkId: string): string {
+  const m = chunkId.match(/^(.+)#chunk_\d+$/);
+  return m ? m[1]! : chunkId;
+}
+
+/**
+ * Resolves which documents satisfy the edition-narrowing filters (manufacturer / model / market / model year /
+ * category). Returns the allowed document ids ONLY when the filters actually exclude some documents; otherwise
+ * (no filters, nothing excluded, or statistics unavailable) returns undefined and no pre-filtering is needed.
+ *
+ * Why: Vectorize has no usable metadata index for these facets, so they were applied AFTER the vector search.
+ * With several near-identical editions indexed, the top-N candidates are split between editions and filtering
+ * afterwards leaves only a fraction (e.g. 4 of 24 chunks for the requested year), starving the results.
+ */
+async function resolveEditionScope(db: D1Database, filters: HydrateFilterOptions): Promise<Set<string> | undefined> {
+  if (!(filters.category || filters.manufacturer || filters.model || filters.market || filters.model_year !== undefined)) {
+    return undefined;
+  }
+  try {
+    const scope = buildKeywordScopeConditions(filters);
+    // LEFT JOIN ... ON 1 = 0 yields one row per document with NULL chunk columns, so the shared scope conditions
+    // (which COALESCE chunk and document columns) evaluate against the document alone.
+    const sql = `SELECT d.id AS id, CASE WHEN ${scope.conditions.length > 0 ? scope.conditions.join(" AND ") : "1 = 1"} THEN 1 ELSE 0 END AS ok
+      FROM documents d LEFT JOIN document_chunks c ON 1 = 0 LIMIT 500`;
+    const { results } = await db.prepare(sql).bind(...scope.params).all<{ id: string; ok: number }>();
+    const rows = results ?? [];
+    if (rows.length === 0 || rows.some((r) => r.ok === undefined)) return undefined;
+    const allowed = new Set(rows.filter((r) => Number(r.ok) === 1).map((r) => String(r.id)));
+    if (allowed.size === 0 || allowed.size === rows.length) return undefined; // nothing to narrow
+    return allowed;
+  } catch (err) {
+    console.warn("Edition scope lookup unavailable; filtering after ranking instead:", err);
+    return undefined;
+  }
+}
+
 /**
  * "Quick search" for the clarification menu: offer every indexed document of the same family (same manufacturer /
  * model / market as the competing results), not only those that happened to rank in the top results.
@@ -1207,17 +1248,35 @@ export async function hybridSearchDetailed(
   const requestedTopK = options.topK ?? 8;
   const candidatePoolSize = Math.max(requestedTopK * 3, 24);
 
-  let matches = await searchManuals(vectorIndex, queryVector, {
-    topK: candidatePoolSize,
-    ...(Object.keys(filter).length > 0 ? { filter } : {}),
-  });
+  // Pre-filter by edition: when the filters exclude some indexed documents, fetch the largest pool Vectorize allows
+  // and keep only candidates from the allowed documents, so other editions cannot crowd the requested one out.
+  const allowedDocs = db
+    ? await resolveEditionScope(db, {
+        category: options.category,
+        manufacturer: options.manufacturer,
+        model: effectiveModel,
+        market: effectiveMarket,
+        model_year: options.model_year,
+      })
+    : undefined;
+  const searchPool = (withFilter: boolean) =>
+    allowedDocs
+      ? searchManuals(vectorIndex, queryVector, {
+          topK: MAX_FILTERED_CANDIDATE_POOL,
+          returnMetadata: "indexed",
+          ...(withFilter && Object.keys(filter).length > 0 ? { filter } : {}),
+        }).then((found) => found.filter((m) => allowedDocs.has(documentIdOf(m.id))))
+      : searchManuals(vectorIndex, queryVector, {
+          topK: candidatePoolSize,
+          ...(withFilter && Object.keys(filter).length > 0 ? { filter } : {}),
+        });
+
+  let matches = await searchPool(true);
 
   // If Vectorize metadata filtering (e.g. over-specific subsystem or chassis) yields 0 matches,
   // fall back to unfiltered semantic search so relevant chunks are not lost.
   if (matches.length === 0 && Object.keys(filter).length > 0) {
-    matches = await searchManuals(vectorIndex, queryVector, {
-      topK: candidatePoolSize,
-    });
+    matches = await searchPool(false);
   }
   if (db && options.queryText) {
     const tokens = tokenizeQuery(options.queryText);
