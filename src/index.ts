@@ -71,7 +71,7 @@ IMPORTANT SAFETY INSTRUCTIONS FOR LLM CONSUMERS:
     description: `Searches indexed technical documentation, OEM body builder manuals (BEMM), and component guides.
 IMPORTANT INSTRUCTIONS FOR LLM CONSUMERS:
 - Adhere strictly to the returned 'retrieval_contract'.
-- NO ASSUMED CONTEXT: never assume a model year, model, manufacturer or market. If the response has needs_clarification=true, do NOT answer: ask the user the suggested_question (offering the listed options) unless they already stated it earlier, then call again with the answer as filters (or include_all_variants=true if they want every variant).
+- NO ASSUMED CONTEXT: never assume a model year, model or manufacturer. The ONLY default is market=us when none is given (see defaults_applied; mention it to the user). If the response has needs_clarification=true, do NOT answer: ask the user the suggested_question (offering the listed options) unless they already stated it earlier, then call again with the answer as filters (or include_all_variants=true if they want every variant).
 - STRICT ICE DEFAULT: Always assume internal combustion engine (ICE / gas / diesel) by default. Deliver exhaustive ICE specifications first. Never gate the response asking if the user has an EV.
 - DIAGRAM-TEXT CONSISTENCY: Every callout number, pinout ID, or stud rating in your text MUST match the exact diagram image embedded. Never cite callout numbers from an electric/BEV diagram when describing an ICE vehicle (e.g., do not cite BEV points 1–45 when answering for ICE points 49–88).
 - BROAD QUERY ENUMERATION: When an inquiry is open-ended (e.g., connection points, mounting zones), output a structured, complete inventory of all documented options using compact tables or categorized lists with key parameters.

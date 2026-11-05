@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
-import { assessAmbiguity, type AmbiguityCandidate } from "../../src/utils/disambiguation.ts";
+import {
+  assessAmbiguity,
+  completeWithKnownDocuments,
+  sharedFacetFilter,
+  type AmbiguityCandidate,
+} from "../../src/utils/disambiguation.ts";
 import { hybridSearch, hybridSearchDetailed } from "../../src/utils/db.ts";
 import { buildClarificationPayload } from "../../src/tools/manuals.ts";
 
@@ -88,6 +93,35 @@ describe("assessAmbiguity", () => {
   });
 });
 
+describe("clarification menu lists the whole indexed family, not only what ranked", () => {
+  const base = assessAmbiguity(
+    [cand("d2024", 1, { model_year: 2024 }), cand("d2020", 1, { model_year: 2020 }), cand("d2024", 2, { model_year: 2024 })],
+    {}
+  )!;
+  const known = (id: string, year: number) => ({
+    id, title: `Title ${id}`, manufacturer: "widgetco", model: "alpha", market: "us",
+    metadata_json: JSON.stringify({ year_start: year, year_end: null }),
+  });
+
+  it("adds indexed editions that were not retrieved and rebuilds the choices and question", () => {
+    const full = completeWithKnownDocuments(base, [known("d2024", 2024), known("d2020", 2020), known("d2027", 2027)]);
+    expect(full.choices.model_year).toEqual(["2020", "2024", "2027"]);
+    const added = full.options.find((o) => o.document_title === "Title d2027");
+    expect(added).toMatchObject({ model_year: "2027", matching_chunks: 0 });
+    expect(full.options.filter((o) => o.document_title === "Title d2024")).toHaveLength(1); // no duplicates
+    expect(full.suggested_question).toContain("Title d2027");
+  });
+
+  it("derives the family lookup from facets shared by every option and not being asked about", () => {
+    expect(sharedFacetFilter(base)).toEqual({ manufacturer: "widgetco", model: "alpha", market: "us" });
+    const mixed = assessAmbiguity(
+      [cand("a", 1, { model: "alpha" }), cand("b", 1, { model: "beta" }), cand("a", 2, { model: "alpha" })],
+      { model_year: 2024 }
+    )!;
+    expect(sharedFacetFilter(mixed)).toEqual({ manufacturer: "widgetco", market: "us" }); // model is the missing facet
+  });
+});
+
 describe("hybridSearchDetailed clarification gate", () => {
   const vec = new Array(768).fill(0.1) as number[];
   const row = (doc: string, n: number, year: number, text: string) => ({
@@ -103,18 +137,27 @@ describe("hybridSearchDetailed clarification gate", () => {
     row("d2020", 2, 2020, "Tank venting hose routing requires a rising loop near the filler neck assembly."),
   ];
   const matches = rows.map((r, i) => ({ id: r.id, score: 0.9 - i * 0.01, metadata: { source: "s", text: "" } }));
+  // The documents table (family lookup for the clarification menu) includes a 2027 edition that did not rank.
+  const docRows = [2024, 2020, 2027].map((y) => ({
+    id: `d${y}`, title: `Doc d${y}`, manufacturer: "widgetco", model: "alpha", market: "us",
+    metadata_json: JSON.stringify({ year_start: y, year_end: null }),
+  }));
+  const fakeDb = {
+    prepare: (sql: string) => ({
+      bind: () => ({
+        all: async () => ({ results: /FROM documents( |$)/.test(sql) && !sql.includes("document_chunks") ? docRows : rows }),
+      }),
+    }),
+  } as unknown as D1Database;
   const run = (options: Parameters<typeof hybridSearchDetailed>[3]) =>
-    hybridSearchDetailed(
-      { query: vi.fn().mockResolvedValue({ matches }) } as unknown as VectorizeIndex,
-      { prepare: () => ({ bind: () => ({ all: async () => ({ results: rows }) }) }) } as unknown as D1Database,
-      vec,
-      options
-    );
+    hybridSearchDetailed({ query: vi.fn().mockResolvedValue({ matches }) } as unknown as VectorizeIndex, fakeDb, vec, options);
 
   it("returns a clarification and no results when editions differ and no year was given", async () => {
     const out = await run({ clarify: true });
     expect(out.results).toEqual([]);
     expect(out.clarification?.missing_context).toEqual(["model_year"]);
+    // The menu is the whole indexed family: the 2027 edition did not rank but is offered.
+    expect(out.clarification?.choices.model_year).toEqual(["2020", "2024", "2027"]);
   });
 
   it("answers normally once the year is specified", async () => {
@@ -183,7 +226,18 @@ describe("search_van_manuals tool handler (end to end with mocks)", () => {
       fakeMcp as never,
       { query: vi.fn().mockResolvedValue({ matches: rows.map((r, i) => ({ id: r.id, score: 0.9 - i * 0.01, metadata: { source: "s", text: "" } })) }) } as unknown as VectorizeIndex,
       undefined,
-      { prepare: () => ({ bind: () => ({ all: async () => ({ results: rows }) }) }) } as unknown as D1Database,
+      {
+        prepare: (sql: string) => ({
+          bind: () => ({
+            all: async () => ({
+              results:
+                /FROM documents( |$)/.test(sql) && !sql.includes("document_chunks")
+                  ? [2024, 2020, 2027].map((y) => ({ id: `d${y}`, title: `Doc d${y}`, manufacturer: "widgetco", model: "alpha", market: "us", metadata_json: JSON.stringify({ year_start: y }) }))
+                  : rows,
+            }),
+          }),
+        }),
+      } as unknown as D1Database,
       undefined,
       "token",
       "deepinfra"
@@ -198,7 +252,7 @@ describe("search_van_manuals tool handler (end to end with mocks)", () => {
     expect(out.results).toEqual([]);
     expect(out.count).toBe(0);
     expect(out.clarification.missing_context).toEqual(["model_year"]);
-    expect(out.clarification.choices.model_year).toEqual(["2020", "2024"]);
+    expect(out.clarification.choices.model_year).toEqual(["2020", "2024", "2027"]);
     expect(out.retrieval_metadata.retrieval_contract.context_rule).toContain("NO ASSUMED CONTEXT");
   });
 
@@ -206,6 +260,28 @@ describe("search_van_manuals tool handler (end to end with mocks)", () => {
     const out = await callTool({ model_year: 2024 });
     expect(out.needs_clarification).toBeUndefined();
     expect(out.count).toBeGreaterThan(0);
+  });
+
+  it("defaults the market to us when none is given, and reports that default to the caller", async () => {
+    const out = await callTool({ model_year: 2024 });
+    expect(out.applied_filters.market).toBe("us");
+    expect(out.defaults_applied).toEqual({ market: "us" });
+    expect(out.retrieval_metadata.defaults_applied).toEqual({ market: "us" });
+    expect(out.retrieval_metadata.retrieval_contract.context_rule).toContain("defaults to the US market");
+  });
+
+  it("respects an explicit market and does not report a default", async () => {
+    const out = await callTool({ model_year: 2024, market: "eu" });
+    expect(out.applied_filters.market).toBe("eu");
+    expect(out.defaults_applied).toBeUndefined();
+  });
+
+  it("reports the market default inside a clarification response too, and never asks about the market", async () => {
+    const out = await callTool({});
+    expect(out.needs_clarification).toBe(true);
+    expect(out.clarification.missing_context).not.toContain("market");
+    expect(out.defaults_applied).toEqual({ market: "us" });
+    expect(out.applied_filters.market).toBe("us");
   });
 
   it("returns every variant, each with its own year, when include_all_variants is set", async () => {

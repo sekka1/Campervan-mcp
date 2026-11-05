@@ -779,7 +779,7 @@ describe("Generic Model Disambiguation, Market Defaults & Exact Chunk ID Dedupli
     expect(results[0]?.model).toBe("transit");
   });
 
-  it("does not prefer any market when none is specified (keeps the fused order)", async () => {
+  it("applies default US market ranking when no market filter is specified", async () => {
     const vec = new Array(768).fill(0.1) as number[];
     const matchEu = { id: "doc_eu#chunk_1", score: 0.95, metadata: { source: "mb", text: "EU Spec" } };
     const matchUs = { id: "doc_us#chunk_1", score: 0.80, metadata: { source: "mb", text: "US Spec" } };
@@ -823,14 +823,15 @@ describe("Generic Model Disambiguation, Market Defaults & Exact Chunk ID Dedupli
 
     const { db } = makeDb([], [euChunk, usChunk]);
 
-    // Query without market: no market is assumed or preferred. The better-ranked (EU) chunk stays first.
-    // (The MCP tool itself asks which market is meant; see disambiguation tests.)
+    // Query without market: the US market is the (only) default and is preferred over EU in rank ordering
     const results = await hybridSearch(index, db, vec, {
       manufacturer: "mercedes-benz",
       model: "sprinter",
     });
 
-    expect(results.map((r) => r.id)).toEqual(["doc_eu#chunk_1", "doc_us#chunk_1"]);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]?.id).toBe("doc_us#chunk_1");
+    expect(results[0]?.market).toBe("us");
   });
 
   it("strictly deduplicates duplicate chunk IDs in search results", () => {

@@ -52,7 +52,7 @@ export const MCP_TOOLS_DEFINITIONS = [
           category: { type: "string", description: "Optional document category filter ('chassis', 'climate', 'power', 'plumbing', 'other')" },
           model: { type: "string", description: "Optional short model name in lowercase ('transit', 'sprinter')" },
           manufacturer: { type: "string", description: "Optional manufacturer filter (e.g. 'ford', 'mercedes', 'victron')" },
-          market: { type: "string", description: "Optional regional market filter ('us', 'eu', 'global'). Never assume one; if the response has needs_clarification, ask the user." },
+          market: { type: "string", description: "Optional regional market filter ('us', 'eu', 'global'). Defaults to 'us' when omitted (reported in defaults_applied)." },
           model_year: { type: "number", description: "Model year filter (e.g. 2024). Never assume one; if the response has needs_clarification, ask the user." },
           include_all_variants: { type: "boolean", description: "Set true only when the user wants every matching edition/variant (e.g. after being asked which year and answering 'all')." },
         },

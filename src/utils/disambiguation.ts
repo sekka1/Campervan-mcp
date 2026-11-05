@@ -3,7 +3,7 @@
  *
  * The same question can have different answers for different manufacturers, models, model years or markets
  * (a vehicle platform, a heater, a battery system, a plumbing kit, ...). The server must never silently pick one
- * (for example "the newest year" or "the US market"). Instead, when the best results come from several documents
+ * (for example "the newest year"). The one deliberate default is the US market, applied by the tool layer (not here). Instead, when the best results come from several documents
  * that differ in a facet the caller did NOT specify, it returns a clarification: which facets are missing and which
  * options exist in the indexed documents, so the LLM can ask the user a short follow-up question.
  *
@@ -167,6 +167,14 @@ export function assessAmbiguity(
       };
     });
 
+  return composeClarification(options, missing, choices);
+}
+
+function composeClarification(
+  options: VariantOption[],
+  missing: VariantFacet[],
+  choices: Partial<Record<VariantFacet, string[]>>
+): Clarification {
   const missingLabels = missing.map((m) => FACET_LABEL[m]);
   const joined =
     missingLabels.length > 1
@@ -176,7 +184,7 @@ export function assessAmbiguity(
 
   return {
     needs_clarification: true,
-    reason: `The best matches come from ${variants.length} different documents that differ in ${joined}, and no ${joined} was specified. The answer may differ between them, so none was assumed.`,
+    reason: `The best matches come from different documents that differ in ${joined}, and no ${joined} was specified. The answer may differ between them, so none was assumed.`,
     missing_context: missing,
     choices,
     options,
@@ -184,4 +192,77 @@ export function assessAmbiguity(
     instruction:
       "Do NOT answer yet and do NOT pick an option yourself. If the user already stated the missing detail earlier in the conversation, call the tool again with it as a filter. Otherwise ask the user the suggested question (you may rephrase it), then call the tool again with the answer as filters. If the user wants every variant, call again with include_all_variants=true and label each part of your answer with its document title and year.",
   };
+}
+
+/** A row of the documents table, reduced to the facets used for disambiguation. */
+export interface KnownDocument {
+  id: string;
+  title?: string | undefined;
+  manufacturer?: string | undefined;
+  model?: string | undefined;
+  market?: string | undefined;
+  metadata_json?: string | undefined;
+}
+
+/**
+ * Completes the options with every indexed document of the same family, not only those that happened to rank:
+ * a user whose vehicle is not among the top results would otherwise be offered the wrong menu. `docs` should be the
+ * documents that share the facets common to all current options (see `sharedFacetFilter`).
+ */
+export function completeWithKnownDocuments(clarification: Clarification, docs: ReadonlyArray<KnownDocument>): Clarification {
+  const options = [...clarification.options];
+  const seen = new Set(options.map((o) => o.document_title));
+  for (const d of docs) {
+    const asCandidate: AmbiguityCandidate = {
+      id: `${d.id}#chunk_0`,
+      document_title: d.title ?? d.id,
+      manufacturer: d.manufacturer,
+      model: d.model,
+      market: d.market,
+      model_year: yearFromMetadata(d.metadata_json),
+      metadata_json: d.metadata_json,
+    };
+    const title = asCandidate.document_title!;
+    if (seen.has(title)) continue;
+    seen.add(title);
+    options.push({
+      document_title: title,
+      ...(facetValue(asCandidate, "manufacturer") ? { manufacturer: facetValue(asCandidate, "manufacturer")! } : {}),
+      ...(facetValue(asCandidate, "model") ? { model: facetValue(asCandidate, "model")! } : {}),
+      ...(facetValue(asCandidate, "model_year") ? { model_year: facetValue(asCandidate, "model_year")! } : {}),
+      ...(facetValue(asCandidate, "market") ? { market: facetValue(asCandidate, "market")! } : {}),
+      matching_chunks: 0,
+    });
+  }
+  const choices: Partial<Record<VariantFacet, string[]>> = {};
+  for (const facet of clarification.missing_context) {
+    const values = new Set<string>(clarification.choices[facet] ?? []);
+    for (const o of options) {
+      const v = o[facet];
+      if (v) values.add(v);
+    }
+    choices[facet] = Array.from(values).sort();
+  }
+  return composeClarification(options, clarification.missing_context, choices);
+}
+
+/** Facets whose value is identical across all options (and not being asked about): the family to look up. */
+export function sharedFacetFilter(clarification: Clarification): Partial<Record<"manufacturer" | "model" | "market", string>> {
+  const out: Partial<Record<"manufacturer" | "model" | "market", string>> = {};
+  for (const facet of ["manufacturer", "model", "market"] as const) {
+    if (clarification.missing_context.includes(facet)) continue;
+    const values = new Set(clarification.options.map((o) => o[facet]).filter((v): v is string => Boolean(v)));
+    if (values.size === 1) out[facet] = Array.from(values)[0]!;
+  }
+  return out;
+}
+
+function yearFromMetadata(metadata_json?: string): number | undefined {
+  if (!metadata_json) return undefined;
+  try {
+    const y = Number((JSON.parse(metadata_json) as { year_start?: unknown }).year_start);
+    return Number.isFinite(y) && y > 0 ? y : undefined;
+  } catch {
+    return undefined;
+  }
 }

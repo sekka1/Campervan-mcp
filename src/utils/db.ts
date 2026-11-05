@@ -2,7 +2,13 @@
  * Helper wrappers for Cloudflare D1 (SQL) and Vectorize (vector search) bindings.
  */
 
-import { assessAmbiguity, type Clarification } from "./disambiguation.js";
+import {
+  assessAmbiguity,
+  completeWithKnownDocuments,
+  sharedFacetFilter,
+  type Clarification,
+  type KnownDocument,
+} from "./disambiguation.js";
 
 // ---------------------------------------------------------------------------
 // D1 Helpers
@@ -1138,6 +1144,40 @@ export async function hybridSearch(
   return (await hybridSearchDetailed(vectorIndex, db, queryVector, options)).results;
 }
 
+/**
+ * "Quick search" for the clarification menu: offer every indexed document of the same family (same manufacturer /
+ * model / market as the competing results), not only those that happened to rank in the top results.
+ * Falls back to the original clarification if the lookup is unavailable.
+ */
+async function withFamilyOptions(db: D1Database | undefined, clarification: Clarification): Promise<Clarification> {
+  if (!db) return clarification;
+  try {
+    const shared = sharedFacetFilter(clarification);
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (shared.manufacturer) {
+      conditions.push("LOWER(COALESCE(manufacturer, '')) = ?");
+      params.push(shared.manufacturer);
+    }
+    if (shared.model) {
+      conditions.push("LOWER(COALESCE(model, '')) = ?");
+      params.push(shared.model);
+    }
+    if (shared.market) {
+      conditions.push("LOWER(COALESCE(market, 'global')) IN (?, 'global')");
+      params.push(shared.market);
+    }
+    const sql = `SELECT id, title, manufacturer, model, market, metadata_json FROM documents${
+      conditions.length > 0 ? ` WHERE ${conditions.join(" AND ")}` : ""
+    } LIMIT 50`;
+    const { results } = await db.prepare(sql).bind(...params).all<KnownDocument>();
+    return completeWithKnownDocuments(clarification, results ?? []);
+  } catch (err) {
+    console.warn("Could not list sibling documents for the clarification menu:", err);
+    return clarification;
+  }
+}
+
 /** Hybrid search that can also report that more context (year / model / ...) is needed. */
 export async function hybridSearchDetailed(
   vectorIndex: VectorizeIndex,
@@ -1160,6 +1200,8 @@ export async function hybridSearchDetailed(
   }
   if (options.subsystem) filter["subsystem"] = { $eq: options.subsystem };
 
+  // The ONE default: when no market is specified, the US market is preferred (the MCP tool also applies it as a filter).
+  const defaultMarketPreference = options.market ?? "us";
   const effectiveModel = options.model;
   const effectiveMarket = options.market;
   const requestedTopK = options.topK ?? 8;
@@ -1333,7 +1375,9 @@ export async function hybridSearchDetailed(
       model_year: options.model_year,
       source: options.source,
     });
-    if (clarification) return { results: [], clarification };
+    if (clarification) {
+      return { results: [], clarification: await withFamilyOptions(db, clarification) };
+    }
   }
 
   // Deduplicate by chunk ID and (optionally) near-identical chunks across editions within the same context.
@@ -1343,7 +1387,8 @@ export async function hybridSearchDetailed(
 
   // Generic ranking priority:
   // 1. Exact model match (when options.model is specified) ranks ahead of derivative/compound models
-  // 2. (No market/year/vehicle preference: unspecified context is asked about, never assumed.)
+  // 2. Default US/global market preference (when options.market is not specified or "us") ranks ahead of foreign regional markets.
+  //    (This is the ONLY default; year/model/manufacturer are asked about, never assumed.)
   // 3. Intelligent Powertrain / Fuel Bias: Default to ICE unless BEV indicators were explicitly provided
   mappedResults.sort((a, b) => {
     if (options.model) {
@@ -1352,6 +1397,14 @@ export async function hybridSearchDetailed(
       const bExact = (b.model || "").toLowerCase() === reqModel ? 1 : 0;
       if (aExact !== bExact) {
         return bExact - aExact;
+      }
+    }
+
+    if (defaultMarketPreference === "us") {
+      const aIsUs = (a.market || "global").toLowerCase() === "us" || (a.market || "global").toLowerCase() === "global" ? 1 : 0;
+      const bIsUs = (b.market || "global").toLowerCase() === "us" || (b.market || "global").toLowerCase() === "global" ? 1 : 0;
+      if (aIsUs !== bIsUs) {
+        return bIsUs - aIsUs;
       }
     }
 
