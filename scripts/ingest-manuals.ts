@@ -86,8 +86,25 @@ export const MAX_CHUNK_CHARACTERS = 3000;
  * so 1,000 characters provides comfortable margin below 512 tokens. */
 export const MAX_DEEPINFRA_INPUT_CHARS = 1000;
 export const EMERGENCY_DEEPINFRA_INPUT_CHARS = 600;
+/** Progressively shorter retry ceilings used if an embedding batch still exceeds the 512-token limit. */
+export const EMERGENCY_DEEPINFRA_LIMITS = [EMERGENCY_DEEPINFRA_INPUT_CHARS, 300, 150] as const;
+
+/**
+ * Collapses runs of repeated filler punctuation (table-of-contents dot leaders "........", rules "-----",
+ * "_____", "=====") to three characters, and spaced leaders ". . . . ." to three dots.
+ * Such runs carry no meaning for retrieval but tokenize at roughly ONE token per character, so a
+ * 600-character dot-leader chunk is 513 tokens (> the 512-token embedding limit) even though the character
+ * ceilings below assume ~2 characters per token. Applied to the text sent for EMBEDDING only; stored chunk
+ * text is unchanged.
+ */
+export function collapseFillerRuns(text: string): string {
+  return text
+    .replace(/([.\-_=*·•…~])\1{3,}/g, "$1$1$1")
+    .replace(/(?:[.\-_·]\s){4,}/g, ". . . ");
+}
 
 export function sanitizeForDeepInfra(text: string, maxChars: number = MAX_DEEPINFRA_INPUT_CHARS): string {
+  text = collapseFillerRuns(text);
   if (text.length <= maxChars) {
     return text;
   }
@@ -644,40 +661,41 @@ export async function generateEmbeddings(
           errorBody.includes("context length") ||
           errorBody.includes("input_tokens"))
       ) {
-        console.warn(
-          `DeepInfra context length limit exceeded. Retrying with emergency truncation (${EMERGENCY_DEEPINFRA_INPUT_CHARS} chars)...`
-        );
-        const emergencyTexts = sanitizedTexts.map((t) =>
-          sanitizeForDeepInfra(t, EMERGENCY_DEEPINFRA_INPUT_CHARS)
-        );
-        const retryResponse = await fetch(DEEPINFRA_EMBEDDING_ENDPOINT, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token.trim()}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ inputs: emergencyTexts }),
-        });
-        if (retryResponse.ok) {
-          const retryData = (await retryResponse.json()) as {
-            embeddings: number[][];
-            usage?: { prompt_tokens: number; total_tokens: number };
-          };
-          if (
-            retryData &&
-            Array.isArray(retryData.embeddings) &&
-            retryData.embeddings.length === emergencyTexts.length
-          ) {
-            console.log(
-              `Emergency retry succeeded for ${emergencyTexts.length} chunks via DeepInfra.`
-            );
-            return retryData.embeddings;
-          }
-        } else {
-          const retryErr = await retryResponse.text();
-          console.error(
-            `Emergency retry failed [HTTP ${retryResponse.status}]: ${retryErr}`
+        // Progressive safety net (the filler-collapse in sanitizeForDeepInfra is the primary defence): retry with
+        // ever shorter inputs. If even the shortest fails, fall through and fail loudly (no zero-vectors).
+        for (const limit of EMERGENCY_DEEPINFRA_LIMITS) {
+          console.warn(
+            `DeepInfra context length limit exceeded. Retrying with emergency truncation (${limit} chars)...`
           );
+          const emergencyTexts = sanitizedTexts.map((t) => sanitizeForDeepInfra(t, limit));
+          const retryResponse = await fetch(DEEPINFRA_EMBEDDING_ENDPOINT, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token.trim()}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ inputs: emergencyTexts }),
+          });
+          if (retryResponse.ok) {
+            const retryData = (await retryResponse.json()) as {
+              embeddings: number[][];
+              usage?: { prompt_tokens: number; total_tokens: number };
+            };
+            if (
+              retryData &&
+              Array.isArray(retryData.embeddings) &&
+              retryData.embeddings.length === emergencyTexts.length
+            ) {
+              console.log(
+                `Emergency retry (${limit} chars) succeeded for ${emergencyTexts.length} chunks via DeepInfra.`
+              );
+              return retryData.embeddings;
+            }
+            break;
+          }
+          const retryErr = await retryResponse.text();
+          console.error(`Emergency retry (${limit} chars) failed [HTTP ${retryResponse.status}]: ${retryErr}`);
+          if (!(retryResponse.status === 400 && /input tokens|context length|input_tokens/.test(retryErr))) break;
         }
       }
       throw new Error(
