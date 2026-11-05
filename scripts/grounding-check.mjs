@@ -162,6 +162,47 @@ export function findUngroundedClaims({ answer, evidence, pages = new Set(), ques
 }
 
 /**
+ * Own-advice section of an answer: from a heading/bold line containing "general guidance" up to the next
+ * horizontal rule or heading. The retrieval contract requires this label for everything not from the manuals.
+ */
+export function extractGeneralGuidance(answer) {
+  const lines = String(answer ?? "").split("\n");
+  const start = lines.findIndex((l) => /^\s*(?:#{1,6}\s*|\*\*)[^\n]*general\s+guidance/i.test(l));
+  if (start === -1) return "";
+  const out = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^\s*(?:-{3,}|#{1,6}\s)/.test(lines[i])) break;
+    out.push(lines[i]);
+  }
+  return out.join("\n");
+}
+
+// "points 70/71/75", "item 4", "terminals 3, 5 and 9", "#12": an identifier noun followed by a number list.
+const ITEM_REF_RE =
+  /\b(?:points?|items?|terminals?|pins?|circuits?|studs?|locations?|positions?|connectors?|fuses?|taps?|no\.|nos\.|#)\s*(\d{1,4}(?:\s*(?:[/,&–-]|and|or)\s*\d{1,4})*)/gi;
+
+/**
+ * Generic check: the model's own (non-manual) advice must not pick or endorse items from a documented list.
+ * Returns identifiers named in the general-guidance section that also appear in the retrieved evidence as a
+ * standalone token (e.g. a table row id). Directing the user to "the documented points" is fine; naming a
+ * specific one is choosing among documented items without a cited attribute.
+ */
+export function findEndorsedListItems({ answer, evidence }) {
+  const guidance = stripNoise(extractGeneralGuidance(answer));
+  if (!guidance) return [];
+  const found = new Set();
+  for (const m of guidance.matchAll(ITEM_REF_RE)) {
+    for (const n of m[1].match(/\d{1,4}/g) ?? []) {
+      // PDF text extraction flattens tables (no pipes), so accept the number as a standalone token anywhere in
+      // the evidence; the identifier noun in the advice ("points 70") is what makes it a list-item reference.
+      const inEvidence = new RegExp(`(?<![\\w.,])${n}(?![\\w]|[.,]\\d)`).test(evidence);
+      if (inEvidence) found.add(n);
+    }
+  }
+  return [...found].map((n) => ({ type: "endorsed-item", value: n, claim: `own advice names documented item ${n}` }));
+}
+
+/**
  * Promptfoo `javascript` assertion: fails when the answer contains claims that no tool returned.
  * Usage in promptfooconfig.yaml:
  *   - type: javascript
@@ -171,7 +212,10 @@ export function groundingAssertion(output, context) {
   const { answer, evidence, pages } = parseProviderOutput(output);
   if (!evidence) return { pass: true, score: 1, reason: "No tool evidence in output; grounding check skipped." };
   const question = context?.vars?.question ?? "";
-  const ungrounded = findUngroundedClaims({ answer, evidence, pages, question });
+  const ungrounded = [
+    ...findUngroundedClaims({ answer, evidence, pages, question }),
+    ...findEndorsedListItems({ answer, evidence }),
+  ];
   if (ungrounded.length === 0) return { pass: true, score: 1, reason: "All specs, sections, pages, part numbers and standards are in the retrieved evidence." };
   const list = ungrounded.map((c) => `${c.type}: ${c.claim}`).join("; ");
   return { pass: false, score: 0, reason: `Ungrounded claims (not in any tool result): ${list}` };

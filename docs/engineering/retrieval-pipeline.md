@@ -242,6 +242,13 @@ count as evidence because that tool result is in the trace.
   with `local:sql`.
 - Part numbers are matched ignoring stray spaces around hyphens, because PDF extraction produces text like `KK2V- 14301-K`.
 - It flags inferred page ranges (e.g. citing "pp. 154–155" when only 154 was retrieved) — usually a true positive.
+- **Endorsed-item check (`findEndorsedListItems`).** Class: *the model's own, non-manual advice picks specific items
+  from a documented list* (the contract's `recommendation_rule` forbids this, but compliance is intermittent, so it is
+  also checked mechanically). In the "General guidance" section, an identifier noun plus number
+  ("points 70/71", "terminals 3 and 5", "#12") that also appears as a standalone token in the tool evidence is reported
+  as `endorsed-item`. Extracted PDF tables have no pipes, so evidence matching is token-based; it is a heuristic with
+  possible false positives, and it only inspects the section labelled "General guidance". Naming items inside the
+  manual-attributed part of the answer is fine. Tested with neutral fixtures in `scripts/__tests__/grounding-check.test.ts`.
 
 ### 8.2 Measuring contract compliance (do this before and after changing contract wording)
 
