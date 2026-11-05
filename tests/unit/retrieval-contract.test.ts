@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildBaseRetrievalContract, searchVanManuals } from "../../src/tools/manuals.ts";
 
-const NEW_RULES = ["evidence_rule", "recommendation_rule", "completeness_and_warnings_rule"] as const;
+const NEW_RULES = ["context_rule", "evidence_rule", "recommendation_rule", "completeness_and_warnings_rule"] as const;
 
 describe("retrieval contract grounding rules", () => {
   it("defines the evidence, recommendation and completeness rules", () => {
@@ -24,7 +24,8 @@ describe("retrieval contract grounding rules", () => {
 
   it("provides a short answer checklist covering the highest-value rules", () => {
     const { answer_checklist: list } = buildBaseRetrievalContract();
-    expect(list).toHaveLength(6);
+    expect(list).toHaveLength(7);
+    expect(list[0]).toContain("needs_clarification");
     const joined = list.join(" ");
     expect(joined).toContain("NOT an approval list");
     expect(joined).toContain("missing numbers");

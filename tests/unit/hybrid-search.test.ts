@@ -28,14 +28,13 @@ describe("hydrateChunks", () => {
     expect(prepare).not.toHaveBeenCalled();
   });
 
-  it("falls back to mock results when Vectorize index throws (e.g., local dev or unsupported binding)", async () => {
+  it("fails fast when Vectorize throws instead of returning mock or default-vehicle results", async () => {
     const vec = new Array(768).fill(0.1) as number[];
     const query = vi.fn().mockRejectedValue(new Error("Binding VECTOR_INDEX needs to be run remotely"));
     const index = { query } as unknown as VectorizeIndex;
-    const results = await hybridSearch(index, undefined, vec, { chassis: "transit" });
-    expect(results.length).toBeGreaterThan(0);
-    expect(results[0]?.text).toContain("transit");
-    expect(results[0]?.source).toBe("transit_manual_mock");
+    await expect(hybridSearch(index, undefined, vec, { chassis: "transit" })).rejects.toThrow(
+      /Vectorize search failed: Binding VECTOR_INDEX needs to be run remotely/
+    );
   });
 });
 
@@ -780,7 +779,7 @@ describe("Generic Model Disambiguation, Market Defaults & Exact Chunk ID Dedupli
     expect(results[0]?.model).toBe("transit");
   });
 
-  it("applies default US market ranking when no market filter is specified", async () => {
+  it("does not prefer any market when none is specified (keeps the fused order)", async () => {
     const vec = new Array(768).fill(0.1) as number[];
     const matchEu = { id: "doc_eu#chunk_1", score: 0.95, metadata: { source: "mb", text: "EU Spec" } };
     const matchUs = { id: "doc_us#chunk_1", score: 0.80, metadata: { source: "mb", text: "US Spec" } };
@@ -824,15 +823,14 @@ describe("Generic Model Disambiguation, Market Defaults & Exact Chunk ID Dedupli
 
     const { db } = makeDb([], [euChunk, usChunk]);
 
-    // Query without market: US market should be preferred over EU in rank ordering
+    // Query without market: no market is assumed or preferred. The better-ranked (EU) chunk stays first.
+    // (The MCP tool itself asks which market is meant; see disambiguation tests.)
     const results = await hybridSearch(index, db, vec, {
       manufacturer: "mercedes-benz",
       model: "sprinter",
     });
 
-    expect(results.length).toBeGreaterThan(0);
-    expect(results[0]?.id).toBe("doc_us#chunk_1");
-    expect(results[0]?.market).toBe("us");
+    expect(results.map((r) => r.id)).toEqual(["doc_eu#chunk_1", "doc_us#chunk_1"]);
   });
 
   it("strictly deduplicates duplicate chunk IDs in search results", () => {

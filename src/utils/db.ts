@@ -2,6 +2,8 @@
  * Helper wrappers for Cloudflare D1 (SQL) and Vectorize (vector search) bindings.
  */
 
+import { assessAmbiguity, type Clarification } from "./disambiguation.js";
+
 // ---------------------------------------------------------------------------
 // D1 Helpers
 // ---------------------------------------------------------------------------
@@ -132,25 +134,10 @@ export async function searchManuals(
       },
     }));
   } catch (err: unknown) {
+    // Fail fast (AGENTS.md): never mask a Vectorize outage with fabricated results or a default vehicle.
     const msg = err instanceof Error ? err.message : String(err);
-    // In local development (cf dev) or offline test environments where Vectorize bindings
-    // do not support local execution, catch the runtime error and provide mock fallback results
-    // so local CI smoke testing and offline development work seamlessly.
-    console.warn(`Vectorize search unavailable (${msg}); using local development mock fallback.`);
-    const chassisFilter = (options.filter?.["chassis"] as { $in?: string[] } | undefined)?.$in;
-    const requestedChassis = chassisFilter?.find((c) => c !== "universal") ?? "transit";
-    return [
-      {
-        id: `mock_${requestedChassis}_chunk_0`,
-        score: 0.95,
-        metadata: {
-          source: `${requestedChassis}_manual_mock`,
-          page: 1,
-          section: "Vehicle Electrical & Auxiliary Connections",
-          text: `Authoritative mock specifications for ${requestedChassis}: Auxiliary electrical tap and battery connection guidance (local dev fallback).`,
-        },
-      },
-    ];
+    console.error(`Vectorize query failed: ${msg}`);
+    throw new Error(`Vectorize search failed: ${msg}`);
   }
 }
 
@@ -1109,29 +1096,55 @@ export function buildSchematicUrl(cdnBaseUrl: string, r2Key: string | null): str
   return `${base}/${key.split("/").map(encodeURIComponent).join("/")}`;
 }
 
+export interface HybridSearchOptions {
+  topK?: number;
+  source?: string;
+  chassis?: string;
+  subsystem?: string;
+  cdnBaseUrl?: string;
+  category?: string;
+  manufacturer?: string;
+  model?: string;
+  market?: "us" | "eu" | "global";
+  model_year?: number;
+  queryText?: string;
+  /**
+   * When true, return a clarification (and no results) if the best results come from several documents that
+   * differ in a facet (manufacturer / model / model year / market) the caller did not specify. Default false.
+   */
+  clarify?: boolean;
+  /** When false, near-identical chunks from different editions are all kept (no "newest wins" collapsing). Default true. */
+  collapseEditions?: boolean;
+}
+
+export interface HybridSearchOutcome {
+  results: HybridSearchResult[];
+  /** Present (with empty results) when more context (year / model / ...) is needed to answer without assuming a variant. */
+  clarification?: Clarification;
+}
+
 /**
  * Hybrid search: kNN lookup in Vectorize, then hydrate the matching IDs from D1.
  * Chunks not yet present in D1 (legacy vectors) fall back to Vectorize metadata text.
  * `chassis` and `subsystem` filters require matching Vectorize metadata indexes.
+ * Returns only the ranked results; see `hybridSearchDetailed` for the clarification outcome.
  */
 export async function hybridSearch(
   vectorIndex: VectorizeIndex,
   db: D1Database | undefined,
   queryVector: number[],
-  options: {
-    topK?: number;
-    source?: string;
-    chassis?: string;
-    subsystem?: string;
-    cdnBaseUrl?: string;
-    category?: string;
-    manufacturer?: string;
-    model?: string;
-    market?: "us" | "eu" | "global";
-    model_year?: number;
-    queryText?: string;
-  } = {}
+  options: HybridSearchOptions = {}
 ): Promise<HybridSearchResult[]> {
+  return (await hybridSearchDetailed(vectorIndex, db, queryVector, options)).results;
+}
+
+/** Hybrid search that can also report that more context (year / model / ...) is needed. */
+export async function hybridSearchDetailed(
+  vectorIndex: VectorizeIndex,
+  db: D1Database | undefined,
+  queryVector: number[],
+  options: HybridSearchOptions = {}
+): Promise<HybridSearchOutcome> {
   const filter: VectorizeVectorMetadataFilter = {};
   if (options.source) filter["source"] = { $eq: options.source };
   if (options.chassis) {
@@ -1147,8 +1160,6 @@ export async function hybridSearch(
   }
   if (options.subsystem) filter["subsystem"] = { $eq: options.subsystem };
 
-  // If no regional market was specified by caller, default market preference is "us"
-  const defaultMarketPreference = options.market ?? "us";
   const effectiveModel = options.model;
   const effectiveMarket = options.market;
   const requestedTopK = options.topK ?? 8;
@@ -1300,15 +1311,39 @@ export async function hybridSearch(
   })
   ;
 
-  // Deduplicate by chunk ID and cross-edition
-  mappedResults = deduplicateCrossEditionChunks(mappedResults);
-
   // Check whether query contains explicit BEV tokens
   const isBevQuery = queryContainsBevIndicators(options.queryText);
 
+  // For a non-BEV query, BEV chunks are dropped whenever any non-BEV chunk exists (ICE-by-default policy).
+  const dropBevForNonBevQuery = (items: HybridSearchResult[]): HybridSearchResult[] => {
+    if (isBevQuery) return items;
+    const nonBev = items.filter((chunk) => (chunk.fuel_type || extractChunkFuelType(chunk)) !== "bev");
+    return nonBev.length > 0 ? nonBev : items;
+  };
+
+  // No assumed context: if the best results come from several documents that differ in a facet the caller did
+  // not specify (model year, model, manufacturer, market), ask instead of silently picking one (e.g. "newest").
+  // Assessed BEFORE edition de-duplication, which would otherwise hide the fact that editions differ.
+  if (options.clarify) {
+    const clarification = assessAmbiguity(dropBevForNonBevQuery(mappedResults).slice(0, requestedTopK), {
+      manufacturer: options.manufacturer,
+      model: options.model,
+      chassis: options.chassis,
+      market: options.market,
+      model_year: options.model_year,
+      source: options.source,
+    });
+    if (clarification) return { results: [], clarification };
+  }
+
+  // Deduplicate by chunk ID and (optionally) near-identical chunks across editions within the same context.
+  mappedResults = options.collapseEditions === false
+    ? mappedResults.filter((r, i, arr) => arr.findIndex((o) => o.id === r.id) === i)
+    : deduplicateCrossEditionChunks(mappedResults);
+
   // Generic ranking priority:
   // 1. Exact model match (when options.model is specified) ranks ahead of derivative/compound models
-  // 2. Default US/global market preference (when options.market is not specified or "us") ranks ahead of foreign regional markets
+  // 2. (No market/year/vehicle preference: unspecified context is asked about, never assumed.)
   // 3. Intelligent Powertrain / Fuel Bias: Default to ICE unless BEV indicators were explicitly provided
   mappedResults.sort((a, b) => {
     if (options.model) {
@@ -1317,14 +1352,6 @@ export async function hybridSearch(
       const bExact = (b.model || "").toLowerCase() === reqModel ? 1 : 0;
       if (aExact !== bExact) {
         return bExact - aExact;
-      }
-    }
-
-    if (defaultMarketPreference === "us") {
-      const aIsUs = (a.market || "global").toLowerCase() === "us" || (a.market || "global").toLowerCase() === "global" ? 1 : 0;
-      const bIsUs = (b.market || "global").toLowerCase() === "us" || (b.market || "global").toLowerCase() === "global" ? 1 : 0;
-      if (aIsUs !== bIsUs) {
-        return bIsUs - aIsUs;
       }
     }
 
@@ -1356,15 +1383,7 @@ export async function hybridSearch(
   // Step 3 Post-Retrieval Re-Ranking & Filtering:
   // If not an explicit BEV query, strictly filter out fuel === 'bev' chunks if non-BEV chunks exist.
   // Only return BEV chunks if isBevQuery is true or if zero non-BEV chunks matched.
-  if (!isBevQuery) {
-    const nonBevChunks = mappedResults.filter((chunk) => {
-      const fuel = chunk.fuel_type || extractChunkFuelType(chunk);
-      return fuel !== "bev";
-    });
-    if (nonBevChunks.length > 0) {
-      mappedResults = nonBevChunks;
-    }
-  }
+  mappedResults = dropBevForNonBevQuery(mappedResults);
 
-  return mappedResults.slice(0, requestedTopK);
+  return { results: mappedResults.slice(0, requestedTopK) };
 }

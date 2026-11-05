@@ -119,6 +119,10 @@ describe("Post-Deployment Live Smoke Test Suite", () => {
       }>;
     }>("search_van_manuals", {
       query: "Customer Connection Points CCP1 CCP2 driver seat",
+      // The server never assumes a model/year: with several editions indexed it would ask which one.
+      // Test context is therefore explicit.
+      model: "transit",
+      model_year: 2024,
     });
 
     console.log(`  Received ${data.results.length} chunks (default top_k: 8)`);

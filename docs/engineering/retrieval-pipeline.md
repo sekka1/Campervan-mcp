@@ -78,9 +78,12 @@ Order of operations (every step is a place a chunk can be lost; use `pnpm local:
    continuation text (`chunk_N+1`, `+2`) onto top hits and cue-bearing chunks — but **only across compatible
    powertrains** (`arePowertrainsCompatible`).
 6. **`promoteNonBevNeighbors`** (PR #74, non-BEV queries only) — see §5.
-7. **Dedup** `deduplicateCrossEditionChunks`: drops near-identical chunks across model years (keeps newest);
-   never collapses BEV with ICE (PR #72).
-8. **Sort**: exact model match → US/global market preference → ICE-before-BEV (unless the query has BEV
+7. **Clarification gate, then dedup** (only for the MCP tool, `clarify: true`; see §9). If the best results come from
+   several documents that differ in a facet the caller did not specify, return `needs_clarification` and no results
+   *before* anything is collapsed. Otherwise `deduplicateCrossEditionChunks` drops near-identical chunks across
+   overlapping editions **within the context the caller specified** (keeps newest); never collapses BEV with ICE (PR #72);
+   skipped when `include_all_variants` is set.
+8. **Sort**: exact model match → ICE-before-BEV (unless the query has BEV
    indicators) → **fused (RRF) rank** (position in `matches`, which is why promoted chunks are *inserted* next to
    their parent, not appended). Raw `score` is deliberately not used: before this was fixed, keyword-only hits (synthetic
    0.75) outranked genuine semantic matches (~0.70–0.76 cosine) and silently discarded the fusion order, which pushed
@@ -254,4 +257,39 @@ judge matters: the first pass used a stricter premium judge, the re-check used t
 - Checker false positives are worth chasing, but fix the checker (generic normalization), not the model.
 - Weaker/cheaper models comply less; if a metric will not move with wording, use a stronger model for those clients
   rather than adding more prompt text.
+
+## 9. No assumed context: asking instead of defaulting (`needs_clarification`)
+
+**Principle.** The same question has different answers for different manufacturers, models, model years and markets
+(vehicle platforms, heaters, battery systems, plumbing kits...). The server must never silently choose one. Removed
+implicit defaults: the `market: "us"` schema default and US ranking preference, "newest edition wins" for
+unspecified years, and the mock fallback that named a default vehicle (`?? "transit"`; Vectorize errors now throw).
+*Still deliberate:* the ICE-by-default **powertrain** policy (§4), which the owner asked for explicitly.
+
+**Mechanism** (generic; facet values come from the indexed documents, nothing hardcoded):
+1. `hybridSearchDetailed(..., { clarify: true })` ranks as usual, then calls `assessAmbiguity` on the top-`top_k`
+   results (BEV chunks dropped first for non-BEV queries), **before** edition de-duplication.
+2. Results are grouped by document. A document is a real competing variant if it has at least 2 of the top results or
+   one in the top 3 ranks (`MIN_CHUNKS_FOR_VARIANT`, `TOP_RANKS_FOR_VARIANT`); a stray low-ranked chunk is ignored.
+3. For each facet the caller did **not** specify (`manufacturer`, `model` (a `chassis` filter counts), `model_year`,
+   `market`), if the variants show 2+ distinct values the facet is "missing". A specific `source` disables the gate.
+4. If any facet is missing the tool returns the normal response shape with `count: 0`, `results: []`,
+   `needs_clarification: true` and `clarification` = `{ reason, missing_context, choices, options[], suggested_question,
+   instruction }`. The contract's `context_rule` / checklist item 1 tell the LLM to ask the user (or, if the user already
+   said it earlier in the conversation, to re-call with the filter), then call again with the answer as filters.
+5. `include_all_variants: true` is the escape hatch ("all of them"/"not sure"): no clarification and **no edition
+   collapsing**; each result carries its own `document_title` and `model_year` so the answer can be labelled.
+
+**Verification.** Unit tests use neutral fixtures (`tests/unit/disambiguation.test.ts`: detector, search gate, and the
+registered tool handler end to end). Real-data check needs 2+ editions ingested: `pnpm local:probe "<question>"` prints
+`NEEDS CLARIFICATION` with the choices. With a single indexed document nothing is ever asked.
+
+**Known limits / follow-ups.**
+- Variants are detected only from the top results; a variant that exists but is not retrieved is not offered.
+- Facets come from document metadata (`manufacturer`, `model`, `market`, `year_start/year_end`); documents missing that
+  metadata cannot be disambiguated.
+- Powertrain (ICE/BEV) is not a clarification facet (policy §4).
+- `hybridSearchDetailed` still normalises the `chassis` filter with a small hardcoded alias list
+  (`transit`/`sprinter`/`promaster`) when building the Vectorize filter; this predates the generic-first rule and should be
+  replaced by values read from the indexed documents.
 

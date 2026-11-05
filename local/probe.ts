@@ -19,6 +19,11 @@ const json: any = await res.json();
 const data = JSON.parse(json.result.content[0].text);
 if (process.env["RAW"]) console.log(JSON.stringify(data, null, 2));
 console.log(`\nquery: ${query}\ncount: ${data.count ?? data.results?.length}`);
+if (data.needs_clarification) {
+  console.log("\nNEEDS CLARIFICATION:", data.clarification.reason);
+  console.log("missing:", data.clarification.missing_context.join(", "), "| choices:", JSON.stringify(data.clarification.choices));
+  console.log("ask:", data.clarification.suggested_question);
+}
 for (const [i, r] of (data.results ?? []).entries()) {
   console.log(
     `#${i} score=${r.score?.toFixed?.(3)} p${r.page} fuel=${r.fuel_type ?? r.powertrain ?? "?"} ` +
