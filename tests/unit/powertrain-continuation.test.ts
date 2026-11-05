@@ -174,7 +174,7 @@ describe("extractNeutralSectionContext", () => {
     await promoteNonBevNeighbors(mockDb(neighbours), matches, hydrated);
 
     expect(hydrated.get("doc#chunk_2")!.chunk_text).toContain("Only use the anchor points indicated.");
-    expect(hydrated.get("doc#chunk_2")!.chunk_text).toContain("preceding p150 opener");
+    expect(hydrated.get("doc#chunk_2")!.chunk_text).toContain("page 150, the opener of this section");
     expect(hydrated.get("doc#chunk_3")!.chunk_text).toBe("table rows");
   });
 });

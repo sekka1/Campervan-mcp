@@ -396,33 +396,10 @@ export function reciprocalRankFusion(
     .map(([id]) => id);
 }
 
-/**
- * Searches D1 for chunks matching query tokens and ranks by distinct token matches.
- */
-export async function searchD1KeywordCandidates(
-  db: D1Database,
-  tokens: string[],
-  filters: HydrateFilterOptions = {},
-  limit = 20
-): Promise<Array<{ id: string; score: number }>> {
-  if (tokens.length === 0) return [];
-
-  const queryTokens = tokens.slice(0, 8);
+/** SQL conditions (and params) restricting keyword statistics/search to the caller's filters. Aliases: c = chunks, d = documents. */
+function buildKeywordScopeConditions(filters: HydrateFilterOptions): { conditions: string[]; params: unknown[] } {
   const conditions: string[] = [];
   const params: unknown[] = [];
-
-  const scoreParts = queryTokens.map((t) => {
-    params.push(`%${t}%`, `%${t}%`);
-    return `(CASE WHEN LOWER(c.chunk_text) LIKE ? THEN 2 ELSE 0 END + CASE WHEN LOWER(COALESCE(c.section_title, '')) LIKE ? THEN 3 ELSE 0 END)`;
-  });
-
-  const tokenOrClauses = queryTokens.map(() => `(LOWER(c.chunk_text) LIKE ? OR LOWER(COALESCE(c.section_title, '')) LIKE ?)`);
-  for (const t of queryTokens) {
-    params.push(`%${t}%`, `%${t}%`);
-  }
-
-  conditions.push(`(${tokenOrClauses.join(" OR ")})`);
-
   if (filters.category) {
     conditions.push(`LOWER(COALESCE(c.category, d.category, '')) = ?`);
     params.push(filters.category.toLowerCase().trim());
@@ -455,6 +432,106 @@ export async function searchD1KeywordCandidates(
     );
     params.push(filters.model_year, filters.model_year);
   }
+
+  return { conditions, params };
+}
+
+/** A token found in more than this share of a document's chunks carries no ranking signal. */
+export const BOILERPLATE_TOKEN_DOC_RATIO = 0.6;
+/** Ignore documents smaller than this when judging how common a token is (tiny docs skew ratios). */
+const BOILERPLATE_MIN_DOC_CHUNKS = 20;
+
+/**
+ * Finds, per document, the query tokens that appear in most of that document's chunks (page banners, the
+ * make/model/year printed on every page, section footers). Such a token matches everything in that document
+ * equally, so in keyword ranking it only pulls in unrelated chunks and crowds out the real answer; semantic search
+ * and the metadata filters already handle "which vehicle".
+ *
+ * Returns token -> ids of documents in which it is boilerplate. Suppression is PER DOCUMENT: a word that is
+ * boilerplate in one manual still matches normally in every other manual. Within a document, if every query token
+ * would be suppressed, none are (keyword search would otherwise lose all signal there). Measured in the caller's
+ * filter scope with no hardcoded vocabulary; returns an empty map if statistics are unavailable.
+ */
+export async function findBoilerplateTokensByDocument(
+  db: D1Database,
+  tokens: string[],
+  filters: HydrateFilterOptions = {}
+): Promise<Map<string, Set<string>>> {
+  const suppressed = new Map<string, Set<string>>();
+  if (tokens.length < 2) return suppressed;
+  try {
+    const scope = buildKeywordScopeConditions(filters);
+    const selects = tokens.map(
+      (_, i) => `SUM(CASE WHEN LOWER(c.chunk_text) LIKE ? THEN 1 ELSE 0 END) AS t${i}`
+    );
+    const query = `SELECT c.document_id AS doc, COUNT(*) AS n, ${selects.join(", ")}
+      FROM document_chunks c JOIN documents d ON d.id = c.document_id
+      ${scope.conditions.length > 0 ? `WHERE ${scope.conditions.join(" AND ")}` : ""}
+      GROUP BY c.document_id`;
+    const { results } = await db
+      .prepare(query)
+      .bind(...tokens.map((t) => `%${t}%`), ...scope.params)
+      .all<Record<string, number | string>>();
+
+    for (const row of results ?? []) {
+      const n = Number(row["n"]);
+      if (!(n >= BOILERPLATE_MIN_DOC_CHUNKS)) continue; // tiny documents skew ratios
+      const flagged = tokens.filter((_, i) => Number(row[`t${i}`] ?? 0) / n > BOILERPLATE_TOKEN_DOC_RATIO);
+      if (flagged.length === 0 || flagged.length === tokens.length) continue;
+      for (const token of flagged) {
+        const docs = suppressed.get(token) ?? new Set<string>();
+        docs.add(String(row["doc"]));
+        suppressed.set(token, docs);
+      }
+    }
+  } catch (err) {
+    console.warn("Boilerplate-token statistics unavailable; using all tokens:", err);
+    return new Map();
+  }
+  return suppressed;
+}
+
+/**
+ * Searches D1 for chunks matching query tokens and ranks by distinct token matches.
+ */
+export async function searchD1KeywordCandidates(
+  db: D1Database,
+  tokens: string[],
+  filters: HydrateFilterOptions = {},
+  limit = 20
+): Promise<Array<{ id: string; score: number }>> {
+  if (tokens.length === 0) return [];
+
+  const queryTokens = tokens.slice(0, 8);
+  const suppressed = await findBoilerplateTokensByDocument(db, queryTokens, filters);
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  // Per token: an optional "this document does not treat the token as boilerplate" guard.
+  const guardFor = (token: string): { sql: string; ids: string[] } => {
+    const ids = Array.from(suppressed.get(token) ?? []);
+    return ids.length === 0
+      ? { sql: "1=1", ids }
+      : { sql: `c.document_id NOT IN (${ids.map(() => "?").join(", ")})`, ids };
+  };
+
+  const scoreParts = queryTokens.map((t) => {
+    const g = guardFor(t);
+    params.push(...g.ids, `%${t}%`, ...g.ids, `%${t}%`);
+    return `(CASE WHEN ${g.sql} AND LOWER(c.chunk_text) LIKE ? THEN 2 ELSE 0 END + CASE WHEN ${g.sql} AND LOWER(COALESCE(c.section_title, '')) LIKE ? THEN 3 ELSE 0 END)`;
+  });
+
+  const tokenOrClauses = queryTokens.map((t) => {
+    const g = guardFor(t);
+    params.push(...g.ids, `%${t}%`, `%${t}%`);
+    return `(${g.sql} AND (LOWER(c.chunk_text) LIKE ? OR LOWER(COALESCE(c.section_title, '')) LIKE ?))`;
+  });
+
+  conditions.push(`(${tokenOrClauses.join(" OR ")})`);
+
+  const scope = buildKeywordScopeConditions(filters);
+  conditions.push(...scope.conditions);
+  params.push(...scope.params);
 
   const query = `
     SELECT c.id,
@@ -952,7 +1029,7 @@ export async function promoteNonBevNeighbors(
         sectionNotes
           ? {
               ...row,
-              chunk_text: `[Section notes from the preceding p${chunk.page_number} opener (variant-specific sentences omitted)]: ${sectionNotes}\n\n${row.chunk_text}`,
+              chunk_text: `[Section notes from page ${chunk.page_number}, the opener of this section (variant-specific sentences omitted); the content below starts on page ${row.page_number} and may continue onto later pages]: ${sectionNotes}\n\n${row.chunk_text}`,
             }
           : row;
 
@@ -1148,6 +1225,8 @@ export async function hybridSearch(
       options.model_year !== undefined
   );
 
+  const fusedRank = new Map(matches.map((m, i) => [m.id, i]));
+
   let mappedResults = matches
     .filter((m) => {
       if (hasFilters && db) {
@@ -1268,10 +1347,10 @@ export async function hybridSearch(
       }
     }
 
-    if (options.model || defaultMarketPreference === "us") {
-      return b.score - a.score;
-    }
-    return 0;
+    // Final tie-break: the fused (RRF) rank. Raw `score` is NOT comparable across sources: keyword-only
+    // candidates carry a fixed synthetic score (0.75) that would outrank genuine cosine similarities and
+    // discard the fusion order. Promoted continuations sit right after their parent in `matches`.
+    return (fusedRank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (fusedRank.get(b.id) ?? Number.MAX_SAFE_INTEGER);
   });
 
   // Step 3 Post-Retrieval Re-Ranking & Filtering:
