@@ -15,7 +15,7 @@ import { findUngroundedClaims, parseProviderOutput } from "../scripts/grounding-
 const question = process.argv[2] ?? "where are the grounding points for a 2024 Ford transit?";
 const provider = new Provider({
   config: {
-    model: process.env["ASK_MODEL"] ?? "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+    model: process.env["ASK_MODEL"] ?? "deepseek-ai/DeepSeek-V4-Flash-0731",
     serverUrl: process.env["SERVER_URL"] ?? "http://127.0.0.1:8787",
     apiBaseUrl: "https://api.deepinfra.com/v1/openai",
     apiKeyEnvar: "DEEPINFRA_TOKEN",
