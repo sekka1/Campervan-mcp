@@ -104,8 +104,12 @@ assert_field "calculate_dc_wire_and_fuse returns fuse_type" "${abyc_response}" '
 echo
 echo "--- tools/call search_van_manuals ---"
 manuals_response=$(json_rpc 4 tools/call '{"name":"search_van_manuals","arguments":{"query":"Transit body builder roof load rating","top_k":2}}')
-assert_field "search_van_manuals succeeds" "${manuals_response}" '.result.isError != true'
-assert_field "search_van_manuals returns query" "${manuals_response}" '(.result.content[0].text | fromjson).query == "Transit body builder roof load rating"'
+# Offline/local mode (cf dev) has no Vectorize index and no embedding provider. The tool must then FAIL FAST with a
+# clear error instead of returning fabricated or mock results (AGENTS.md). When real backing services are available it
+# must succeed and echo the query. Real search quality is covered by the post-deploy live tests (LIVE_DEPLOYED_TEST).
+assert_field "search_van_manuals responds: succeeds, or fails fast with a clear error when backing services are unavailable" "${manuals_response}" '
+  ((.result.isError != true) and ((.result.content[0].text | fromjson).query == "Transit body builder roof load rating"))
+  or ((.result.isError == true) and (.result.content[0].text | test("Vectorize search failed|No embedding provider available|embedding"; "i")))'
 
 echo
 echo "--- tools/call inspect_manual_chunks ---"

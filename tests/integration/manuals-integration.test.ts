@@ -91,6 +91,32 @@ describe("Integration: Manual Tools & Ingestion Verification", () => {
     });
   });
 
+  describe("Fail-Fast when no embedding provider is available", () => {
+    function handlerFor(ai: Ai | undefined, token: string | undefined, provider: string | undefined) {
+      const mcp = new McpServer({ name: "test-mcp", version: "1.0.0" });
+      const vectorIndex = { query: vi.fn() } as unknown as VectorizeIndex;
+      registerManualTools(mcp, vectorIndex, ai, undefined, undefined, token, provider);
+      const tools = (
+        mcp as unknown as {
+          _registeredTools: Record<string, { handler: (args: unknown) => Promise<unknown> }>;
+        }
+      )._registeredTools;
+      return { handler: tools["search_van_manuals"].handler, vectorIndex };
+    }
+
+    it("throws instead of searching with a zero vector when DeepInfra is selected but no token or AI is available", async () => {
+      const { handler, vectorIndex } = handlerFor(undefined, undefined, "deepinfra");
+      await expect(handler({ query: "auxiliary battery tap" })).rejects.toThrow(/No embedding provider available/);
+      expect(vectorIndex.query).not.toHaveBeenCalled();
+    });
+
+    it("throws instead of searching with a zero vector when Cloudflare is selected but env.AI is missing", async () => {
+      const { handler, vectorIndex } = handlerFor(undefined, undefined, "cloudflare");
+      await expect(handler({ query: "auxiliary battery tap" })).rejects.toThrow(/Refusing to use a zero vector/);
+      expect(vectorIndex.query).not.toHaveBeenCalled();
+    });
+  });
+
   describe("Metadata Hydration from D1", () => {
     it("hydrates source from document_title and manufacturer from D1 record rather than returning unknown", async () => {
       const mcp = new McpServer({ name: "test-mcp", version: "1.0.0" });
@@ -130,7 +156,9 @@ describe("Integration: Manual Tools & Ingestion Verification", () => {
         prepare: vi.fn().mockReturnValue({ bind }),
       } as unknown as D1Database;
 
-      registerManualTools(mcp, vectorIndex, undefined, db);
+      // An embedding provider is required (there is no zero-vector fallback any more).
+      const ai = { run: vi.fn().mockResolvedValue({ data: [new Array(768).fill(0.1)] }) } as unknown as Ai;
+      registerManualTools(mcp, vectorIndex, ai, db);
 
       const registeredTools = (
         mcp as unknown as {

@@ -73,4 +73,5 @@ universal cautions → `extractNeutralSectionContext`. (This section is an examp
 - To restart the local server after editing `src/`, stop the old process by PID (`ss -ltnp | grep :8787`) — `tsx` does not hot-reload.
   Avoid `pkill -f`/`pgrep -f` patterns that appear in your own command line; they can kill your shell.
 - `pnpm eval:grounding` needs the environment variables from `.campervan-d1.env` in the shell (`set -a; . ./.campervan-d1.env; set +a`).
-
+- Without credentials/bindings (e.g. `cf dev` in CI) `search_van_manuals` fails fast ("No embedding provider available" / "Vectorize search failed") instead of returning fake results; `scripts/test-mcp-endpoints.sh` accepts that offline. To run it against real data use `pnpm local:server` and `BASE_URL=http://127.0.0.1:8787 scripts/test-mcp-endpoints.sh`.
+- Don't `source .campervan-d1.env` into the shell you run `pnpm test:unit` from: tests assume those variables are unset (use `pnpm local:*` scripts, which load the file only for that process).

@@ -315,18 +315,19 @@ export async function generateEmbedding(
       console.warn("DEEPINFRA_TOKEN not set; falling back to Workers AI binding.");
       return await generateWorkersAiEmbedding(text, ai);
     }
-    console.warn("DEEPINFRA_TOKEN not set and env.AI unavailable; returning zero vector for local dev/testing.");
-    return new Array(768).fill(0) as number[];
+    // Fail fast (AGENTS.md): a zero vector makes cosine similarity collapse and returns arbitrary chunks.
+    throw new Error(
+      "No embedding provider available: set DEEPINFRA_TOKEN (EMBEDDING_PROVIDER=deepinfra) or bind Workers AI (env.AI). Refusing to use a zero vector."
+    );
   }
 
   // Cloudflare Workers AI
   if (ai) {
     return await generateWorkersAiEmbedding(text, ai);
   }
-  console.warn(
-    "Workers AI binding (env.AI) is unavailable; returning zero vector for local dev/testing."
+  throw new Error(
+    "No embedding provider available: Workers AI binding (env.AI) is unavailable and no DEEPINFRA_TOKEN is set. Refusing to use a zero vector."
   );
-  return new Array(768).fill(0) as number[];
 }
 
 /**
