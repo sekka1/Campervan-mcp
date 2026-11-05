@@ -42,7 +42,7 @@ If you cannot express a fix without naming a specific vehicle, part or page, sto
 
 Paid model calls cost the owner real money (a premium judge model was once used by mistake for evaluation runs).
 1. **Only use models that are already defined in this repo's config/code** (`promptfooconfig.yaml`, `scripts/metadata.ts`, `src/tools/manuals.ts`, `local/ask.ts`). Never introduce another model id, and never use Claude/GPT-class or other premium models via DeepInfra or any API for evaluation, grading, testing or debugging.
-2. **Do not copy defaults blindly.** If an existing config references an expensive model (e.g. the `llm-rubric` grader in `promptfooconfig.yaml` is `anthropic/claude-sonnet-4-6`, $3/$15 per 1M tokens), do not reuse it in new configs or scripts: use the cheap default model (`deepseek-ai/DeepSeek-V4-Flash-0731`) and tell the user about the expensive setting.
+2. **Do not copy defaults blindly.** If an existing config references an expensive model (for example `anthropic/claude-sonnet-4-6`, $3/$15 per 1M tokens, which used to be the `llm-rubric` grader), do not reuse it in new configs or scripts: use the cheap default model (`deepseek-ai/DeepSeek-V4-Flash-0731`) and tell the user about the expensive setting. All promptfoo graders in this repo now use that cheap model.
 3. **Keep paid runs small and deliberate.** Prefer unit tests and local probes (free) first; use few repeats; send graders only the text they need (e.g. strip the raw tool trace); never loop evaluations without a stated reason.
 4. **Ask before using any model or paid service not listed above**, and report approximate usage when you ran evaluations.
 
